@@ -4,11 +4,13 @@ Chrome Automation Script
 - Supports up to 5 URLs total (Google Drive + Notion combined).
 
 Usage:
-    python chrome_opener.py              # Open all configured URLs
-    python chrome_opener.py --list       # Show configured URLs
-    python chrome_opener.py --add URL    # Add a URL
-    python chrome_opener.py --remove N   # Remove URL at index N
-    python chrome_opener.py --clear      # Remove all URLs
+    ChromeOpener.exe                    # Open all configured URLs
+    ChromeOpener.exe --list             # Show configured URLs
+    ChromeOpener.exe --add URL          # Add a URL
+    ChromeOpener.exe --set N URL        # Change URL at index N
+    ChromeOpener.exe --remove N         # Remove URL at index N
+    ChromeOpener.exe --edit             # Open config.json in Notepad
+    ChromeOpener.exe --clear            # Remove all URLs
 """
 
 import json
@@ -19,7 +21,15 @@ import sys
 import webbrowser
 import time
 
-CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+def get_base_dir():
+    """Get base directory - works for both script and PyInstaller exe."""
+    if getattr(sys, "frozen", False):
+        # Running as PyInstaller exe
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+CONFIG_FILE = os.path.join(get_base_dir(), "config.json")
 MAX_URLS = 5
 
 
@@ -153,6 +163,42 @@ def remove_url(config, index):
     return config
 
 
+def set_url(config, index, new_url):
+    """Replace a URL at the given index."""
+    urls = config.get("urls", [])
+
+    if index < 0 or index >= len(urls):
+        print(f"Invalid index. Valid range: 0 ~ {len(urls) - 1}")
+        return config
+
+    old_url = urls[index]
+    urls[index] = new_url
+    config["urls"] = urls
+    save_config(config)
+    print(f"Changed [{index}]:")
+    print(f"  Before: {old_url}")
+    print(f"  After:  {new_url}")
+    return config
+
+
+def edit_config():
+    """Open config.json in the system text editor for direct editing."""
+    if not os.path.exists(CONFIG_FILE):
+        save_config({"urls": []})
+
+    system = platform.system()
+    if system == "Windows":
+        os.startfile(CONFIG_FILE)
+    elif system == "Darwin":
+        subprocess.Popen(["open", "-t", CONFIG_FILE])
+    else:
+        editor = os.environ.get("EDITOR", "xdg-open")
+        subprocess.Popen([editor, CONFIG_FILE])
+
+    print(f"Opened config file: {CONFIG_FILE}")
+    print("Edit the URLs in the JSON file and save.")
+
+
 def clear_urls(config):
     """Remove all URLs."""
     config["urls"] = []
@@ -213,6 +259,19 @@ def main():
             return
         config = load_config()
         remove_url(config, int(args[idx + 1]))
+        return
+
+    if "--set" in args:
+        idx = args.index("--set")
+        if idx + 2 >= len(args):
+            print("Usage: ChromeOpener.exe --set <index> <new_URL>")
+            return
+        config = load_config()
+        set_url(config, int(args[idx + 1]), args[idx + 2])
+        return
+
+    if "--edit" in args:
+        edit_config()
         return
 
     if "--clear" in args:
