@@ -161,7 +161,7 @@ function submitReturn(payload) {
   var orderNo = String(payload.orderNo || '').trim();
   var customer = String(payload.customer || '').trim();
   var returnDate = String(payload.returnDate || '').trim();
-  if (!orderNo) throw new Error('주문번호가 없습니다.');
+  // 고객명으로 접수하는 흐름이므로 고객명만 필수, 주문번호는 선택 입력
   if (!customer) throw new Error('고객명이 없습니다.');
 
   var modeLabel = payload.mode === 'scan' ? '바코드 반복 스캔' : '수기 입력';
