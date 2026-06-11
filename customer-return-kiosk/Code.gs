@@ -120,14 +120,19 @@ function normalizeIsbn_(raw) {
 }
 
 /**
- * A열(입력일시) 기준 실제 데이터의 마지막 행 번호.
- * 체크박스 FALSE 값 등으로 부풀려진 getLastRow() 대신 사용해
- * 새 기록이 항상 기존 데이터 바로 다음 행에 쓰이도록 보장합니다.
+ * 실제 데이터의 마지막 행 번호.
+ * 체크박스(선택/반품처리완료) 열의 FALSE 값으로 부풀려진 getLastRow() 대신,
+ * 체크박스가 없는 A~I열의 공란 여부로 판단합니다. A~I 중 하나라도 값이 있으면
+ * 데이터 행으로 보며, 새 기록은 항상 그 바로 다음 행에 누적 기록됩니다.
  */
 function lastDataRow_(sheet) {
-  var vals = sheet.getRange(1, 1, sheet.getMaxRows(), 1).getValues();
+  var cols = Math.min(9, sheet.getMaxColumns());   // A~I열만 검사 (체크박스 열 제외)
+  var vals = sheet.getRange(1, 1, sheet.getMaxRows(), cols).getValues();
   for (var i = vals.length - 1; i >= 0; i--) {
-    if (vals[i][0] !== '' && vals[i][0] !== null) return i + 1;
+    for (var j = 0; j < cols; j++) {
+      var v = vals[i][j];
+      if (v !== '' && v !== null && v !== false) return i + 1;
+    }
   }
   return 1;
 }
