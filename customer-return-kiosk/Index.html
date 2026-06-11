@@ -373,11 +373,16 @@
     <div id="camera-error" style="display:none; flex-direction:column; gap:14px; align-items:center;">
       <div style="font-size:2.6rem;">🚫</div>
       <p id="camera-error-msg" style="font-size:1.05rem; line-height:1.5; text-align:center;"></p>
-      <button class="btn" id="btn-open-newtab" onclick="openInNewTab()" style="display:none;">🗗 새 창에서 열기</button>
     </div>
-    <button class="btn secondary" onclick="closeCamera()">닫기</button>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+      <button class="btn" onclick="takePhoto()">📸 사진 찍어 인식</button>
+      <button class="btn secondary" onclick="closeCamera()">닫기</button>
+    </div>
+    <p style="color:var(--muted); font-size:.92rem; text-align:center;">실시간 카메라가 켜지지 않으면 "사진 찍어 인식"을 이용하세요</p>
   </div>
 </div>
+<input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none">
+<div id="photo-reader" style="display:none"></div>
 
 <!-- 권수 키패드 모달 (반품 OK / 접수 불가 권수를 각각 입력) -->
 <div class="modal" id="qty-modal">
@@ -799,16 +804,15 @@ function showCameraError(err) {
   } else if (name === 'NotReadableError' || name === 'AbortError') {
     msg = '다른 프로그램이 카메라를 사용 중이라 열 수 없습니다. 해당 프로그램을 종료한 뒤 다시 시도해주세요.';
   } else if (name === 'NotSupportedError') {
-    msg = '이 브라우저는 카메라 기능을 지원하지 않습니다. 최신 Chrome 사용을 권장합니다.';
+    msg = '이 브라우저는 실시간 카메라를 지원하지 않습니다. 아래 "📸 사진 찍어 인식"을 이용해주세요.';
   } else if (inIframe) {
-    // Apps Script 웹앱이 구글 샌드박스 iframe 안에서 실행되면
-    // 브라우저에서 권한을 허용해도 카메라가 차단됩니다.
-    msg = '구글 내장 화면(iframe) 안에서는 보안 정책 때문에 카메라 권한을 허용해도 카메라가 차단됩니다. 아래 "새 창에서 열기"를 누르고, 새로 열린 창에서 키오스크를 사용해주세요.';
+    // Apps Script 웹앱은 구글 샌드박스 iframe 안에서 실행되어
+    // 권한을 허용해도 실시간 카메라(getUserMedia)가 차단됩니다.
+    msg = '이 화면에서는 보안 정책 때문에 실시간 카메라가 차단됩니다. 아래 "📸 사진 찍어 인식" 버튼을 눌러 코드를 사진으로 찍으면 인식할 수 있습니다.';
   } else {
-    msg = '카메라 권한이 거부되었거나 차단되어 있습니다. 주소창의 자물쇠(🔒) → 사이트 설정에서 카메라를 "허용"으로 바꾸고 새로고침해주세요.';
+    msg = '카메라 권한이 거부되었거나 차단되어 있습니다. 주소창의 자물쇠(🔒) → 사이트 설정에서 카메라를 "허용"으로 바꾸거나, 아래 "📸 사진 찍어 인식"을 이용해주세요.';
   }
   document.getElementById('camera-error-msg').textContent = msg;
-  document.getElementById('btn-open-newtab').style.display = inIframe ? 'inline-block' : 'none';
   document.getElementById('qr-reader').style.display = 'none';
   document.getElementById('camera-error').style.display = 'flex';
 }
@@ -816,9 +820,35 @@ function hideCameraError() {
   document.getElementById('camera-error').style.display = 'none';
   document.getElementById('qr-reader').style.display = 'block';
 }
-/** 현재 iframe 주소를 새 탭(최상위)으로 열면 카메라 제한이 풀립니다 */
-function openInNewTab() {
-  window.open(window.location.href, '_blank');
+
+/* ── 사진 찍어 인식 (iframe에서도 동작하는 대체 수단) ── */
+var photoScanner = null;
+
+function takePhoto() {
+  document.getElementById('photo-input').click();
+}
+
+function onPhotoPicked(e) {
+  var file = e.target.files && e.target.files[0];
+  e.target.value = '';   // 같은 사진을 다시 선택해도 change가 발생하도록 초기화
+  if (!file) return;
+  showLoading(true);
+  try {
+    if (!photoScanner) photoScanner = new Html5Qrcode('photo-reader');
+    var p = photoScanner.scanFileV2
+      ? photoScanner.scanFileV2(file, false).then(function (r) { return r.decodedText; })
+      : photoScanner.scanFile(file, false);
+    p.then(function (text) {
+      showLoading(false);
+      handleIsbnScan(text);   // 모달을 유지해 연속으로 사진 인식 가능
+    }).catch(function () {
+      showLoading(false);
+      toast('사진에서 코드를 인식하지 못했습니다. 코드가 크고 선명하게 나오도록 다시 찍어주세요.', true);
+    });
+  } catch (err) {
+    showLoading(false);
+    toast('사진 인식 실패: ' + err, true);
+  }
 }
 
 function onCameraScan(text) {
@@ -952,6 +982,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('search-input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') runSearch();
   });
+  document.getElementById('photo-input').addEventListener('change', onPhotoPicked);
 });
 function pickSearchResult(i) {
   var b = searchResults[i];
