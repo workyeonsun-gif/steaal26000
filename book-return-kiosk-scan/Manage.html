@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Pretendard', 'Noto Sans KR', 'Malgun Gothic', sans-serif; background: #f1f5f9; color: #0f172a; padding: 14px; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .bar input[type=date], .bar input[type=text] { font-size: .95rem; padding: 8px 10px; border: 2px solid #cbd5e1; border-radius: 8px; }
+  .bar .fld input { min-width: 140px; }
+  .notice {
+    background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8;
+    border-radius: 10px; padding: 9px 12px; font-size: .88rem; margin-bottom: 10px;
+  }
+  button { border: none; border-radius: 8px; padding: 9px 16px; font-size: .95rem; font-weight: 700; cursor: pointer; }
+  .blue { background: #2563eb; color: #fff; }
+  .green { background: #16a34a; color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  #info { color: #64748b; font-size: .9rem; }
+  .rec { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+  .rec.locked { background: #f8fafc; }
+  .rec-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; font-size: .92rem; }
+  .rec-head .sheet { font-weight: 800; color: #2563eb; }
+  .rec-head .ts { color: #64748b; }
+  .rec-head .lock { color: #dc2626; font-weight: 700; margin-left: auto; }
+  .fields { display: flex; gap: 10px; flex-wrap: wrap; }
+  .fld { display: flex; flex-direction: column; gap: 3px; }
+  .fld label { font-size: .78rem; color: #64748b; font-weight: 700; }
+  .fld input, .fld select { font-size: .95rem; padding: 7px 9px; border: 2px solid #e2e8f0; border-radius: 8px; min-width: 110px; }
+  .fld input.changed, .fld select.changed { border-color: #f59e0b; background: #fffbeb; }
+  .fld input:disabled, .fld select:disabled { background: #f1f5f9; color: #94a3b8; }
+  .foot { position: sticky; bottom: 0; background: #f1f5f9; padding-top: 10px; display: flex; gap: 10px; align-items: center; }
+  #empty { color: #64748b; text-align: center; padding: 26px 0; }
+  #msg { font-size: .88rem; color: #16a34a; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="fld"><label>날짜</label><input type="date" id="q-date"></div>
+  <div class="fld"><label>연수과정명</label><input type="text" id="q-course" placeholder="일부만 입력해도 됩니다"></div>
+  <div class="fld"><label>도서명</label><input type="text" id="q-title" placeholder="일부만 입력해도 됩니다"></div>
+  <div class="fld"><label>입력자</label><input type="text" id="q-operator" placeholder="입력자 이름"></div>
+  <button class="blue" onclick="load()">🔎 조회</button>
+</div>
+<div class="notice">ℹ️ 날짜를 지정하지 않고 연수과정명·도서명·입력자만으로 검색하면, <b>검색일 기준 최근 30일 이내</b>의 기록만 조회됩니다. 더 오래된 기록은 날짜를 지정해 조회해주세요.</div>
+<div class="bar"><span id="info"></span></div>
+
+<div id="list"><div id="empty">조건을 입력하고 조회를 눌러주세요 (모두 비우면 최근 30일 전체)</div></div>
+
+<div class="foot">
+  <button class="green" id="save-btn" onclick="save()" disabled>💾 변경사항 저장 (수정이력에 기록됩니다)</button>
+  <span id="msg"></span>
+</div>
+
+<script>
+var current = null;
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function load() {
+  var criteria = {
+    date: document.getElementById('q-date').value,
+    course: document.getElementById('q-course').value.trim(),
+    title: document.getElementById('q-title').value.trim(),
+    operator: document.getElementById('q-operator').value.trim()
+  };
+  document.getElementById('info').textContent = '조회 중…';
+  document.getElementById('msg').textContent = '';
+  google.script.run
+    .withSuccessHandler(render)
+    .withFailureHandler(function (err) {
+      document.getElementById('info').textContent = '';
+      alert('조회 실패: ' + err.message);
+    })
+    .searchRecords(criteria);
+}
+
+function render(res) {
+  current = res;
+  var list = document.getElementById('list');
+  document.getElementById('info').textContent =
+    '조회 범위: ' + res.rangeNote + ' — ' + res.records.length + '건' +
+    (res.truncated ? ' (최대 ' + res.records.length + '건까지만 표시)' : '') +
+    ' · 수정 가능 기한: 입력일로부터 ' + res.limitDays + '일';
+  if (!res.records.length) {
+    list.innerHTML = '<div id="empty">조건에 맞는 기록이 없습니다</div>';
+    document.getElementById('save-btn').disabled = true;
+    return;
+  }
+  list.innerHTML = res.records.map(function (r, ri) {
+    var fields = r.fields.map(function (f, fi) {
+      var attrs = 'data-ri="' + ri + '" data-name="' + esc(f.name) + '" data-orig="' + esc(f.value) + '"' +
+        (r.editable ? '' : ' disabled') + ' oninput="markChanged(this)" onchange="markChanged(this)"';
+      var ctrl;
+      if (f.type === 'status') {
+        var opts = ['반품 OK', '접수 불가(파손)'].map(function (o) {
+          return '<option' + (o === f.value ? ' selected' : '') + '>' + o + '</option>';
+        }).join('');
+        ctrl = '<select ' + attrs + '>' + opts + '</select>';
+      } else if (f.type === 'number') {
+        ctrl = '<input type="number" min="1" value="' + esc(f.value) + '" ' + attrs + ' style="min-width:80px">';
+      } else {
+        ctrl = '<input type="text" value="' + esc(f.value) + '" ' + attrs + '>';
+      }
+      return '<div class="fld"><label>' + esc(f.name) + '</label>' + ctrl + '</div>';
+    }).join('');
+    return '<div class="rec' + (r.editable ? '' : ' locked') + '">' +
+      '<div class="rec-head"><span class="sheet">[' + esc(r.sheet) + '] ' + r.row + '행</span>' +
+      '<span class="ts">입력 ' + esc(r.ts) + '</span>' +
+      '<span>' + esc(r.summary) + '</span>' +
+      (r.editable ? '' : '<span class="lock">🔒 ' + esc(r.lockReason || '수정 불가') + '</span>') +
+      '</div><div class="fields">' + fields + '</div></div>';
+  }).join('');
+  document.getElementById('save-btn').disabled = false;
+}
+
+function markChanged(el) {
+  el.classList.toggle('changed', el.value !== el.dataset.orig);
+}
+
+function collectEdits() {
+  var byKey = {};
+  document.querySelectorAll('[data-ri]').forEach(function (el) {
+    if (el.disabled || el.value === el.dataset.orig) return;
+    var r = current.records[Number(el.dataset.ri)];
+    var key = r.sheet + '|' + r.row;
+    if (!byKey[key]) byKey[key] = { sheet: r.sheet, row: r.row, ts: r.ts, changes: {} };
+    byKey[key].changes[el.dataset.name] = el.value;
+  });
+  return Object.keys(byKey).map(function (k) { return byKey[k]; });
+}
+
+function save() {
+  var edits = collectEdits();
+  if (!edits.length) { alert('변경된 항목이 없습니다.'); return; }
+  if (!confirm('변경 ' + edits.length + '건을 저장할까요?\n변경 전/후 값이 "수정이력" 시트에 기록됩니다.')) return;
+  document.getElementById('save-btn').disabled = true;
+  google.script.run
+    .withSuccessHandler(function (res) {
+      var m = '✅ ' + res.updated + '개 항목이 수정되었습니다.';
+      if (res.blocked && res.blocked.length) m += '\n⚠️ 차단됨:\n- ' + res.blocked.join('\n- ');
+      alert(m);
+      document.getElementById('msg').textContent = res.updated + '개 항목 수정 완료 (수정이력 기록됨)';
+      load();   // 최신 값으로 다시 조회
+    })
+    .withFailureHandler(function (err) {
+      document.getElementById('save-btn').disabled = false;
+      alert('저장 실패: ' + err.message);
+    })
+    .saveRecordEdits(edits);
+}
+</script>
+</body>
+</html>
