@@ -4,8 +4,8 @@
  * 시트 구성
  *  - 도서목록   : ISBN | 제목 | 판정보(초판, 개정 2판 등) | 발간일 | 출판사   (도서 마스터, 관리자가 채움)
  *  - 반품기록   : 접수일시 | 반품일자 | 주문번호 | 고객명 | ISBN | 제목 | 판정보 | 권수 | 상태 | 입력방식 | 스캔원문
- *  - 미등록반품 : 접수일시 | 반품일자 | 주문번호 | 고객명 | ISBN | 권수 | 상태 | 입력방식 | 스캔원문
- *               (도서목록에 없는 ISBN을 스캔한 반품은 이 시트에 따로 기록됩니다)
+ *  - 미등록반품 : 접수일시 | 반품일자 | 주문번호 | 고객명 | ISBN | 제목 | 권수 | 상태 | 입력방식 | 스캔원문
+ *               (도서목록에 없는 ISBN 스캔분과 사용자가 직접 입력한 제목의 반품이 이 시트에 기록됩니다)
  *
  * 상태 값: "반품 OK" 또는 "접수 불가(파손)"
  */
@@ -64,8 +64,8 @@ function ensureUnregisteredSheet_(ss) {
   var sheet = ss.getSheetByName(SHEET_UNREGISTERED);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_UNREGISTERED);
-    sheet.getRange(1, 1, 1, 9)
-      .setValues([['접수일시', '반품일자', '주문번호', '고객명', 'ISBN', '권수', '상태', '입력방식', '스캔원문']])
+    sheet.getRange(1, 1, 1, 10)
+      .setValues([['접수일시', '반품일자', '주문번호', '고객명', 'ISBN', '제목', '권수', '상태', '입력방식', '스캔원문']])
       .setFontWeight('bold');
     sheet.setFrozenRows(1);
     sheet.getRange('C:C').setNumberFormat('@');
@@ -185,7 +185,7 @@ function submitReturn(payload) {
       if (it.found) {
         registeredRows.push([now, returnDate, orderNo, customer, isbn, String(it.title || ''), String(it.edition || ''), qty, statusLabel, modeLabel, qrRaw]);
       } else {
-        unregisteredRows.push([now, returnDate, orderNo, customer, isbn, qty, statusLabel, modeLabel, qrRaw]);
+        unregisteredRows.push([now, returnDate, orderNo, customer, isbn, String(it.title || ''), qty, statusLabel, modeLabel, qrRaw]);
       }
     });
   });
