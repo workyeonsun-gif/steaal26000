@@ -102,6 +102,12 @@
   }
   #book-scan-bar .label { font-size: 1.15rem; font-weight: 700; }
   #book-scan-bar .sub { color: var(--muted); font-size: .95rem; }
+  #book-input-btns {
+    width: min(860px, 96vw); display: flex; gap: 10px;
+  }
+  #book-input-btns .btn {
+    flex: 1; min-width: 0; padding: 14px 8px; font-size: 1.05rem;
+  }
   #cart {
     width: min(860px, 96vw); flex: 1; overflow-y: auto;
     display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px;
@@ -168,17 +174,38 @@
   #qr-reader { width: min(440px, 88vw); border-radius: 12px; overflow: hidden; }
 
   /* 숫자 키패드 */
-  #qty-display {
+  .num-display {
     font-size: 2.6rem; font-weight: 800; background: var(--bg);
     border-radius: 12px; padding: 12px 28px; min-width: 200px; text-align: center;
   }
-  #keypad { display: grid; grid-template-columns: repeat(3, 96px); gap: 10px; }
-  #keypad button {
+  #isbn-display { font-size: 1.9rem; min-width: 300px; letter-spacing: 2px; }
+  .keypad { display: grid; grid-template-columns: repeat(3, 96px); gap: 10px; }
+  .keypad button {
     height: 78px; border: none; border-radius: 14px; background: #e2e8f0;
     font-size: 1.8rem; font-weight: 700; cursor: pointer;
   }
-  #keypad button:active { background: #cbd5e1; }
+  .keypad button:active { background: #cbd5e1; }
   #qty-book-title { color: var(--muted); text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* 도서명 검색 */
+  #search-row { display: flex; gap: 10px; width: 100%; }
+  #search-input {
+    flex: 1; min-width: 0; font-size: 1.3rem; padding: 14px 16px;
+    border: 2px solid #cbd5e1; border-radius: 12px;
+  }
+  #search-input:focus { outline: none; border-color: var(--blue); }
+  #search-results {
+    width: 100%; max-height: 42vh; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .search-result {
+    border: 2px solid #e2e8f0; background: var(--bg); border-radius: 12px;
+    padding: 14px 16px; text-align: left; cursor: pointer; font-size: 1.05rem;
+  }
+  .search-result:active { border-color: var(--blue); background: #eff6ff; }
+  .search-result .t { font-weight: 800; font-size: 1.15rem; }
+  .search-result .s { color: var(--muted); font-size: .92rem; margin-top: 2px; }
+  #search-empty { color: var(--muted); text-align: center; padding: 14px 0; }
 
   /* 토스트 */
   #toast {
@@ -235,6 +262,8 @@
     <div id="manual-course">
       <input id="in-course" type="text" placeholder="연수 과정명">
       <input id="in-cohort" type="text" placeholder="기수 (예: 12기)">
+      <label for="in-startdate" style="font-size:1.05rem;color:var(--muted);font-weight:700;">개강일</label>
+      <input id="in-startdate" type="date">
       <button class="btn" onclick="confirmManualCourse()">확인</button>
     </div>
     <button class="btn ghost" onclick="resetAll()">← 처음으로</button>
@@ -266,7 +295,11 @@
         <div class="label">도서 뒷면의 ISBN 바코드를 스캔하세요</div>
         <div class="sub" id="mode-hint"></div>
       </div>
-      <button class="btn secondary" style="min-width:0; padding:14px 18px; font-size:1.05rem;" onclick="openCamera('book')">📷 카메라</button>
+    </div>
+    <div id="book-input-btns">
+      <button class="btn secondary" onclick="openCamera('book')">📷 카메라·스캐너</button>
+      <button class="btn secondary" onclick="openIsbnPad()">🔢 ISBN 직접 입력</button>
+      <button class="btn secondary" onclick="openSearch()">🔍 도서명 검색</button>
     </div>
     <div id="cart"><div id="cart-empty">아직 스캔한 도서가 없습니다</div></div>
     <div id="books-footer">
@@ -310,8 +343,8 @@
   <div class="modal-card">
     <h3>반품 권수 입력</h3>
     <div id="qty-book-title"></div>
-    <div id="qty-display">1</div>
-    <div id="keypad">
+    <div id="qty-display" class="num-display">1</div>
+    <div id="keypad" class="keypad">
       <button onclick="kp('1')">1</button><button onclick="kp('2')">2</button><button onclick="kp('3')">3</button>
       <button onclick="kp('4')">4</button><button onclick="kp('5')">5</button><button onclick="kp('6')">6</button>
       <button onclick="kp('7')">7</button><button onclick="kp('8')">8</button><button onclick="kp('9')">9</button>
@@ -324,6 +357,38 @@
   </div>
 </div>
 
+<!-- ISBN 직접 입력 모달 -->
+<div class="modal" id="isbn-modal">
+  <div class="modal-card">
+    <h3>ISBN 직접 입력</h3>
+    <p style="color:var(--muted);">도서 뒷면 바코드 아래의 숫자 13자리를 입력하세요</p>
+    <div id="isbn-display" class="num-display">&nbsp;</div>
+    <div class="keypad">
+      <button onclick="ikp('1')">1</button><button onclick="ikp('2')">2</button><button onclick="ikp('3')">3</button>
+      <button onclick="ikp('4')">4</button><button onclick="ikp('5')">5</button><button onclick="ikp('6')">6</button>
+      <button onclick="ikp('7')">7</button><button onclick="ikp('8')">8</button><button onclick="ikp('9')">9</button>
+      <button onclick="ikp('C')">C</button><button onclick="ikp('0')">0</button><button onclick="ikp('⌫')">⌫</button>
+    </div>
+    <div style="display:flex; gap:12px;">
+      <button class="btn secondary" onclick="closeIsbnPad()">취소</button>
+      <button class="btn" onclick="confirmIsbn()">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 도서명 검색 모달 -->
+<div class="modal" id="search-modal">
+  <div class="modal-card">
+    <h3>도서명 검색</h3>
+    <div id="search-row">
+      <input id="search-input" type="text" placeholder="도서명 일부를 입력하세요">
+      <button class="btn" style="min-width:0; padding:14px 22px; font-size:1.1rem;" onclick="runSearch()">검색</button>
+    </div>
+    <div id="search-results"><div id="search-empty">검색어를 입력하고 검색을 눌러주세요</div></div>
+    <button class="btn secondary" onclick="closeSearch()">닫기</button>
+  </div>
+</div>
+
 <div id="loading"><div class="spinner"></div></div>
 <div id="toast"></div>
 
@@ -331,7 +396,7 @@
 /* ───────────────────────── 상태 ───────────────────────── */
 var state = {
   screen: 'idle',
-  course: '', cohort: '', qrRaw: '',
+  course: '', cohort: '', startDate: '', qrRaw: '',
   mode: '',                 // 'manual' | 'scan'
   cart: []                  // [{isbn, title, edition, qty, found}] — found=false면 미등록반품 시트로 기록
 };
@@ -353,7 +418,9 @@ function show(name) {
   });
   var chip = document.getElementById('ctx-chip');
   if (state.course && name !== 'idle' && name !== 'course') {
-    chip.textContent = state.course + (state.cohort ? ' · ' + state.cohort : '');
+    chip.textContent = state.course
+      + (state.cohort ? ' · ' + state.cohort : '')
+      + (state.startDate ? ' · ' + state.startDate : '');
     chip.style.display = 'block';
   } else {
     chip.style.display = 'none';
@@ -375,9 +442,12 @@ function goBooks() {
 function resetAll() {
   closeCamera();
   closeQty();
-  state.course = ''; state.cohort = ''; state.qrRaw = ''; state.mode = ''; state.cart = [];
+  closeIsbnPad();
+  closeSearch();
+  state.course = ''; state.cohort = ''; state.startDate = ''; state.qrRaw = ''; state.mode = ''; state.cart = [];
   document.getElementById('in-course').value = '';
   document.getElementById('in-cohort').value = '';
+  document.getElementById('in-startdate').value = '';
   document.getElementById('manual-course').style.display = 'none';
   show('idle');
 }
@@ -392,46 +462,61 @@ function toggleManualCourse() {
 function confirmManualCourse() {
   var c = document.getElementById('in-course').value.trim();
   var g = document.getElementById('in-cohort').value.trim();
+  var d = document.getElementById('in-startdate').value.trim();
   if (!c) { toast('연수 과정명을 입력해주세요', true); return; }
-  state.course = c; state.cohort = g; state.qrRaw = '';
+  if (!g) { toast('기수를 입력해주세요', true); return; }
+  if (!d) { toast('개강일을 입력해주세요', true); return; }
+  state.course = c; state.cohort = g; state.startDate = d;
   beep();
   show('mode');
 }
 
 /**
  * QR 내용 해석. 지원 형식:
- *  - JSON: {"course":"...","cohort":"..."} 또는 {"과정":"...","기수":"..."}
- *  - 구분자: "과정명|기수", "과정명,기수" (탭/세미콜론/줄바꿈도 허용)
+ *  - JSON: {"course":"...","cohort":"...","startDate":"..."} ('과정'/'기수'/'개강일' 키도 인식)
+ *  - 구분자: "과정명|기수|개강일", "과정명,기수,개강일" (탭/세미콜론/줄바꿈도 허용, 개강일 생략 가능)
  *  - 그 외: 전체를 과정명으로 보고 직접 입력 폼에 채워 확인 요청
  */
 function handleCourseQr(text) {
   text = String(text).trim();
-  var course = '', cohort = '';
+  var course = '', cohort = '', startDate = '';
   try {
     var j = JSON.parse(text);
     course = j.course || j['과정'] || j['연수과정'] || '';
     cohort = j.cohort || j['기수'] || '';
+    startDate = j.startDate || j['개강일'] || '';
   } catch (e) { /* JSON 아님 */ }
   if (!course) {
     var parts = text.split(/[|,;\t\n]/).map(function (s) { return s.trim(); }).filter(Boolean);
-    if (parts.length >= 2) { course = parts[0]; cohort = parts[1]; }
-    else if (parts.length === 1) { course = parts[0]; }
+    if (parts.length >= 1) course = parts[0];
+    if (parts.length >= 2) cohort = parts[1];
+    if (parts.length >= 3) startDate = parts[2];
   }
   if (!course) { toast('QR 내용을 해석할 수 없습니다', true); return; }
 
   state.qrRaw = text;
-  if (cohort) {
-    state.course = course; state.cohort = cohort;
+  if (cohort && startDate) {
+    state.course = course; state.cohort = cohort; state.startDate = startDate;
     beep();
-    toast('✓ ' + course + ' ' + cohort);
+    toast('✓ ' + course + ' ' + cohort + ' · ' + startDate);
     show('mode');
   } else {
-    // 기수가 없으면 수기 폼에 채워서 확인받기
+    // 빠진 항목은 수기 폼에 채워서 마저 입력받기
     document.getElementById('in-course').value = course;
+    document.getElementById('in-cohort').value = cohort;
+    var sd = normalizeDateForInput(startDate);
+    document.getElementById('in-startdate').value = sd;
     document.getElementById('manual-course').style.display = 'flex';
-    document.getElementById('in-cohort').focus();
-    toast('기수를 입력한 뒤 확인을 눌러주세요');
+    (cohort ? document.getElementById('in-startdate') : document.getElementById('in-cohort')).focus();
+    toast('나머지 정보를 입력한 뒤 확인을 눌러주세요');
   }
+}
+
+/** "2026.3.2", "2026/03/02" 등도 date 입력칸 형식(yyyy-mm-dd)으로 맞춤 */
+function normalizeDateForInput(s) {
+  var m = String(s || '').match(/(\d{4})[.\-\/년\s]+(\d{1,2})[.\-\/월\s]+(\d{1,2})/);
+  if (!m) return '';
+  return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
 }
 
 /* ───────────────────── 2. 방식 선택 ───────────────────── */
@@ -568,7 +653,8 @@ function submit() {
     .withSuccessHandler(function (res) {
       showLoading(false);
       document.getElementById('done-msg').textContent =
-        state.course + (state.cohort ? ' · ' + state.cohort : '');
+        state.course + (state.cohort ? ' · ' + state.cohort : '')
+        + (state.startDate ? ' · 개강일 ' + state.startDate : '');
       document.getElementById('done-count').textContent =
         '총 ' + totalQty() + '권의 반품이 기록되었습니다' +
         (res.unregistered ? ' (미등록 도서 ' + res.unregistered + '종은 미등록반품 시트에 기록)' : '');
@@ -581,8 +667,8 @@ function submit() {
       toast('제출 실패: ' + err.message + ' — 다시 시도해주세요', true);
     })
     .submitReturn({
-      course: state.course, cohort: state.cohort, qrRaw: state.qrRaw,
-      mode: state.mode, items: state.cart
+      course: state.course, cohort: state.cohort, startDate: state.startDate,
+      qrRaw: state.qrRaw, mode: state.mode, items: state.cart
     });
 }
 
@@ -603,7 +689,9 @@ document.addEventListener('keydown', function (e) {
 });
 
 function dispatchScan(text) {
-  if (document.getElementById('qty-modal').classList.contains('open')) return;
+  // 키패드/검색 등 모달이 열려 있으면 스캐너 입력 무시 (카메라 모달은 예외)
+  var openModal = document.querySelector('.modal.open');
+  if (openModal && openModal.id !== 'camera-modal') return;
   if (state.screen === 'course') handleCourseQr(text);
   else if (state.screen === 'books') handleIsbnScan(text);
   else if (state.screen === 'idle') { show('course'); handleCourseQr(text); }
@@ -676,6 +764,88 @@ function confirmQty() {
   if (!n || n < 1) { toast('1권 이상 입력해주세요', true); return; }
   if (pendingBook) addToCart(pendingBook.isbn, pendingBook.title, pendingBook.edition, n, false, pendingBook.found);
   closeQty();
+}
+
+/* ───────────────────── ISBN 직접 입력 ───────────────────── */
+var isbnValue = '';
+
+function openIsbnPad() {
+  isbnValue = '';
+  renderIsbnDisplay();
+  document.getElementById('isbn-modal').classList.add('open');
+}
+function closeIsbnPad() {
+  document.getElementById('isbn-modal').classList.remove('open');
+}
+function ikp(k) {
+  if (k === 'C') isbnValue = '';
+  else if (k === '⌫') isbnValue = isbnValue.slice(0, -1);
+  else if (isbnValue.length < 13) isbnValue += k;
+  renderIsbnDisplay();
+}
+function renderIsbnDisplay() {
+  document.getElementById('isbn-display').textContent = isbnValue || ' ';
+}
+function confirmIsbn() {
+  if (!isValidIsbn(isbnValue)) {
+    toast('올바른 ISBN이 아닙니다 (978/979로 시작하는 13자리)', true);
+    return;
+  }
+  closeIsbnPad();
+  handleIsbnScan(isbnValue);
+}
+
+/* ───────────────────── 도서명 검색 ───────────────────── */
+var searchResults = [];
+
+function openSearch() {
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-results').innerHTML =
+    '<div id="search-empty">검색어를 입력하고 검색을 눌러주세요</div>';
+  document.getElementById('search-modal').classList.add('open');
+  document.getElementById('search-input').focus();
+}
+function closeSearch() {
+  document.getElementById('search-modal').classList.remove('open');
+}
+function runSearch() {
+  var q = document.getElementById('search-input').value.trim();
+  if (!q) { toast('검색어를 입력해주세요', true); return; }
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(function (results) {
+      showLoading(false);
+      searchResults = results || [];
+      var box = document.getElementById('search-results');
+      if (!searchResults.length) {
+        box.innerHTML = '<div id="search-empty">검색 결과가 없습니다.<br>도서목록 시트에 등록된 도서만 검색됩니다.</div>';
+        return;
+      }
+      box.innerHTML = searchResults.map(function (b, i) {
+        return '<button class="search-result" onclick="pickSearchResult(' + i + ')">' +
+          '<div class="t">' + esc(b.title) + (b.edition ? ' <span style="font-weight:600;color:var(--muted);">' + esc(b.edition) + '</span>' : '') + '</div>' +
+          '<div class="s">ISBN ' + b.isbn + (b.publisher ? ' · ' + esc(b.publisher) : '') + (b.pubDate ? ' · ' + esc(b.pubDate) : '') + '</div>' +
+          '</button>';
+      }).join('');
+    })
+    .withFailureHandler(function (err) {
+      showLoading(false);
+      toast('검색 실패: ' + err.message, true);
+    })
+    .searchBooks(q);
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.getElementById('search-input').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') runSearch();
+  });
+});
+function pickSearchResult(i) {
+  var b = searchResults[i];
+  if (!b) return;
+  closeSearch();
+  var book = { found: true, isbn: b.isbn, title: b.title, edition: b.edition || '' };
+  bookCache[b.isbn] = book;
+  onBookResolved(book);
 }
 
 /* ───────────────────── 공통 유틸 ───────────────────── */

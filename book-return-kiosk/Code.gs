@@ -3,8 +3,8 @@
  *
  * 시트 구성
  *  - 도서목록   : ISBN | 제목 | 판정보(초판, 개정 2판 등) | 발간일 | 출판사   (도서 마스터, 관리자가 채움)
- *  - 반품기록   : 반품일시 | 연수과정 | 기수 | ISBN | 제목 | 판정보 | 권수 | 입력방식 | QR원문
- *  - 미등록반품 : 반품일시 | 연수과정 | 기수 | ISBN | 권수 | 입력방식 | QR원문
+ *  - 반품기록   : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 판정보 | 권수 | 입력방식 | QR원문
+ *  - 미등록반품 : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 권수 | 입력방식 | QR원문
  *               (도서목록에 없는 ISBN을 스캔한 반품은 이 시트에 따로 기록됩니다)
  */
 
@@ -43,14 +43,14 @@ function setupSheets() {
   var rets = ss.getSheetByName(SHEET_RETURNS);
   if (!rets) {
     rets = ss.insertSheet(SHEET_RETURNS);
-    rets.getRange(1, 1, 1, 9)
-      .setValues([['반품일시', '연수과정', '기수', 'ISBN', '제목', '판정보', '권수', '입력방식', 'QR원문']])
+    rets.getRange(1, 1, 1, 10)
+      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '판정보', '권수', '입력방식', 'QR원문']])
       .setFontWeight('bold');
     rets.setFrozenRows(1);
-    rets.getRange('D:D').setNumberFormat('@');
+    rets.getRange('E:E').setNumberFormat('@');
     rets.setColumnWidth(1, 150);
     rets.setColumnWidth(2, 220);
-    rets.setColumnWidth(5, 320);
+    rets.setColumnWidth(6, 320);
   }
 
   ensureUnregisteredSheet_(ss);
@@ -61,14 +61,14 @@ function ensureUnregisteredSheet_(ss) {
   var sheet = ss.getSheetByName(SHEET_UNREGISTERED);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_UNREGISTERED);
-    sheet.getRange(1, 1, 1, 7)
-      .setValues([['반품일시', '연수과정', '기수', 'ISBN', '권수', '입력방식', 'QR원문']])
+    sheet.getRange(1, 1, 1, 8)
+      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '권수', '입력방식', 'QR원문']])
       .setFontWeight('bold');
     sheet.setFrozenRows(1);
-    sheet.getRange('D:D').setNumberFormat('@');
+    sheet.getRange('E:E').setNumberFormat('@');
     sheet.setColumnWidth(1, 150);
     sheet.setColumnWidth(2, 220);
-    sheet.setColumnWidth(4, 140);
+    sheet.setColumnWidth(5, 140);
   }
   return sheet;
 }
@@ -110,10 +110,41 @@ function getBookByIsbn(isbn) {
 }
 
 /**
+ * 도서목록 시트에서 도서명으로 검색합니다. (부분 일치, 대소문자/공백 무시)
+ * @return {Object[]} [{isbn, title, edition, pubDate, publisher}] 최대 20건
+ */
+function searchBooks(query) {
+  var q = String(query || '').replace(/\s+/g, '').toLowerCase();
+  if (!q) return [];
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_BOOKS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+  var results = [];
+  for (var i = 0; i < rows.length && results.length < 20; i++) {
+    var title = String(rows[i][1] || '');
+    if (title.replace(/\s+/g, '').toLowerCase().indexOf(q) === -1) continue;
+    var pubDate = rows[i][3];
+    if (pubDate instanceof Date) {
+      pubDate = Utilities.formatDate(pubDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    }
+    results.push({
+      isbn: normalizeIsbn_(rows[i][0]),
+      title: title,
+      edition: String(rows[i][2] || ''),
+      pubDate: String(pubDate || ''),
+      publisher: String(rows[i][4] || '')
+    });
+  }
+  return results;
+}
+
+/**
  * 반품 내역을 기록합니다.
  *  - 도서목록에 있는 도서   → 반품기록 시트
  *  - 도서목록에 없는 도서   → 미등록반품 시트 (ISBN + 반품정보만 기록)
- * @param {Object} payload {course, cohort, qrRaw, mode, items:[{isbn,title,edition,qty,found}]}
+ * @param {Object} payload {course, cohort, startDate, qrRaw, mode, items:[{isbn,title,edition,qty,found}]}
  * @return {Object} {ok, count, unregistered}
  */
 function submitReturn(payload) {
@@ -122,6 +153,7 @@ function submitReturn(payload) {
   }
   var course = String(payload.course || '').trim();
   var cohort = String(payload.cohort || '').trim();
+  var startDate = String(payload.startDate || '').trim();
   if (!course) throw new Error('연수 과정 정보가 없습니다.');
 
   var modeLabel = payload.mode === 'scan' ? '바코드 반복 스캔' : '수기 입력';
@@ -134,9 +166,9 @@ function submitReturn(payload) {
     var qty = Math.max(1, parseInt(it.qty, 10) || 1);
     var isbn = normalizeIsbn_(it.isbn);
     if (it.found) {
-      registeredRows.push([now, course, cohort, isbn, String(it.title || ''), String(it.edition || ''), qty, modeLabel, qrRaw]);
+      registeredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), String(it.edition || ''), qty, modeLabel, qrRaw]);
     } else {
-      unregisteredRows.push([now, course, cohort, isbn, qty, modeLabel, qrRaw]);
+      unregisteredRows.push([now, course, cohort, startDate, isbn, qty, modeLabel, qrRaw]);
     }
   });
 
