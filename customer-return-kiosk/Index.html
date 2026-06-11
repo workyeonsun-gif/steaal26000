@@ -264,10 +264,14 @@
   .hist-head .sh { font-weight: 800; color: var(--blue); }
   .hist-head .lk { color: var(--red); font-weight: 800; margin-left: auto; }
   .hist-head .md { color: #d97706; font-weight: 700; }
-  .hist-fields { display: flex; gap: 10px; flex-wrap: wrap; }
-  .hist-fields .hf2 { display: flex; flex-direction: column; gap: 3px; }
-  .hist-fields label { font-size: .78rem; color: var(--muted); font-weight: 700; }
-  .hist-fields input, .hist-fields select { font-size: .98rem; padding: 8px 10px; border: 2px solid #e2e8f0; border-radius: 8px; min-width: 110px; }
+  .hist-fields { display: flex; gap: 12px; flex-wrap: wrap; }
+  .hist-fields .hf2 { display: flex; flex-direction: column; gap: 4px; flex: 1 1 180px; min-width: 0; }
+  .hist-fields label { font-size: .88rem; color: var(--muted); font-weight: 700; }
+  .hist-fields input, .hist-fields select {
+    font-size: 1.2rem; padding: 13px 14px; border: 2px solid #cbd5e1;
+    border-radius: 10px; width: 100%; min-width: 0; min-height: 52px;
+  }
+  .hist-fields input:focus, .hist-fields select:focus { outline: none; border-color: var(--blue); }
   .hist-fields input.changed, .hist-fields select.changed { border-color: #f59e0b; background: #fffbeb; }
   .hist-fields input:disabled, .hist-fields select:disabled { background: #f1f5f9; color: #94a3b8; }
 
@@ -1004,17 +1008,69 @@ function onPhotoPicked(e) {
   e.target.value = '';   // 같은 사진을 다시 선택해도 change가 발생하도록 초기화
   if (!file) return;
   showLoading(true);
+  // 아이폰 HEIC/초고해상도 사진은 그대로는 해독에 실패하므로
+  // 캔버스로 JPEG 변환·축소한 여러 버전을 만들어 차례로 시도합니다.
+  buildPhotoCandidates(file, function (candidates) {
+    if (!candidates || !candidates.length) candidates = [file];   // 변환 실패 시 원본으로 시도
+    tryScanCandidates(candidates, 0);
+  });
+}
+
+/** 사진을 캔버스로 변환해 인식 후보 4종(축소 1600/2400/1000 + 중앙 60% 확대) 생성 */
+function buildPhotoCandidates(file, cb) {
+  var url = URL.createObjectURL(file);
+  var img = new Image();
+  img.onload = function () {
+    var jobs = [];
+    [1600, 2400, 1000].forEach(function (target) {
+      var scale = Math.min(1, target / Math.max(img.width, img.height));
+      jobs.push({ sx: 0, sy: 0, sw: img.width, sh: img.height, scale: scale });
+    });
+    // 바코드를 가운데 두고 찍은 경우를 위한 중앙 60% 확대 버전
+    var cw = Math.round(img.width * 0.6), ch = Math.round(img.height * 0.6);
+    jobs.push({
+      sx: Math.round((img.width - cw) / 2), sy: Math.round((img.height - ch) / 2),
+      sw: cw, sh: ch, scale: Math.min(1, 1600 / Math.max(cw, ch))
+    });
+    var files = [], pending = jobs.length;
+    jobs.forEach(function (j, idx) {
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(j.sw * j.scale));
+      c.height = Math.max(1, Math.round(j.sh * j.scale));
+      c.getContext('2d').drawImage(img, j.sx, j.sy, j.sw, j.sh, 0, 0, c.width, c.height);
+      c.toBlob(function (blob) {
+        files[idx] = blob ? new File([blob], 'scan' + idx + '.jpg', { type: 'image/jpeg' }) : null;
+        if (--pending === 0) {
+          URL.revokeObjectURL(url);
+          cb(files.filter(function (f) { return f; }));
+        }
+      }, 'image/jpeg', 0.92);
+    });
+  };
+  img.onerror = function () {
+    URL.revokeObjectURL(url);
+    cb(null);
+  };
+  img.src = url;
+}
+
+/** 후보 이미지를 순서대로 해독 시도, 첫 성공에서 중단 */
+function tryScanCandidates(candidates, idx) {
+  if (idx >= candidates.length) {
+    showLoading(false);
+    toast('사진에서 코드를 인식하지 못했습니다. 코드가 화면에 크고 선명하게 나오도록 가까이서 다시 찍어주세요.', true);
+    return;
+  }
   try {
     if (!photoScanner) photoScanner = new Html5Qrcode('photo-reader');
     var p = photoScanner.scanFileV2
-      ? photoScanner.scanFileV2(file, false).then(function (r) { return r.decodedText; })
-      : photoScanner.scanFile(file, false);
+      ? photoScanner.scanFileV2(candidates[idx], false).then(function (r) { return r.decodedText; })
+      : photoScanner.scanFile(candidates[idx], false);
     p.then(function (text) {
       showLoading(false);
       startVerifyFromScan(text, 'photo');   // 사진 인식 결과도 확인창을 거쳐 적용
     }).catch(function () {
-      showLoading(false);
-      toast('사진에서 코드를 인식하지 못했습니다. 코드가 크고 선명하게 나오도록 다시 찍어주세요.', true);
+      tryScanCandidates(candidates, idx + 1);
     });
   } catch (err) {
     showLoading(false);
@@ -1317,7 +1373,7 @@ function renderHistory(res) {
           return '<option' + (o === f.value ? ' selected' : '') + '>' + o + '</option>';
         }).join('') + '</select>';
       } else if (f.type === 'number') {
-        ctrl = '<input type="number" min="1" value="' + esc(f.value) + '" ' + attrs + ' style="min-width:80px">';
+        ctrl = '<input type="number" min="1" value="' + esc(f.value) + '" ' + attrs + '>';
       } else {
         ctrl = '<input type="text" value="' + esc(f.value) + '" ' + attrs + '>';
       }
