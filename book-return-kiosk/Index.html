@@ -126,6 +126,10 @@
   }
   .qty-ctrl .qty:active { background: #eff6ff; }
   .cart-item .del { width: 48px; height: 48px; border: none; border-radius: 12px; background: #fee2e2; color: var(--red); font-size: 1.3rem; cursor: pointer; }
+  .badge-unreg {
+    display: inline-block; background: #fee2e2; color: var(--red);
+    font-size: .82rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; vertical-align: middle;
+  }
   #books-footer {
     width: min(860px, 96vw); display: flex; gap: 14px; align-items: center; padding: 8px 0 4px;
   }
@@ -329,7 +333,7 @@ var state = {
   screen: 'idle',
   course: '', cohort: '', qrRaw: '',
   mode: '',                 // 'manual' | 'scan'
-  cart: []                  // [{isbn, title, edition, qty}]
+  cart: []                  // [{isbn, title, edition, qty, found}] — found=false면 미등록반품 시트로 기록
 };
 var bookCache = {};         // isbn -> {found,isbn,title,...}
 var pendingBook = null;     // 키패드 입력 대상
@@ -465,13 +469,16 @@ function handleIsbnScan(text) {
 }
 
 function onBookResolved(book) {
-  var title = book.found ? book.title : '(미등록 도서)';
+  var title = book.found ? book.title : '미등록 도서';
   var edition = book.found ? (book.edition || '') : '';
+  if (!book.found) {
+    toast('도서목록에 없는 도서입니다 — 미등록반품으로 기록됩니다', true);
+  }
   if (state.mode === 'scan') {
-    addToCart(book.isbn, title, edition, 1, true);
+    addToCart(book.isbn, title, edition, 1, true, book.found);
     beep();
   } else {
-    pendingBook = { isbn: book.isbn, title: title, edition: edition };
+    pendingBook = { isbn: book.isbn, title: title, edition: edition, found: book.found };
     var existing = findCartItem(book.isbn);
     openQty(existing ? String(existing.qty) : '1');
     beep();
@@ -484,10 +491,10 @@ function findCartItem(isbn) {
 }
 
 /** accumulate=true면 기존 수량에 더하고, false면 수량을 교체 */
-function addToCart(isbn, title, edition, qty, accumulate) {
+function addToCart(isbn, title, edition, qty, accumulate, found) {
   var item = findCartItem(isbn);
   if (item) item.qty = accumulate ? item.qty + qty : qty;
-  else { item = { isbn: isbn, title: title, edition: edition, qty: qty }; state.cart.push(item); }
+  else { item = { isbn: isbn, title: title, edition: edition, qty: qty, found: !!found }; state.cart.push(item); }
   renderCart(isbn);
   toast('✓ ' + title + (edition ? ' (' + edition + ')' : '') + ' — ' + item.qty + '권');
 }
@@ -505,7 +512,7 @@ function removeItem(isbn) {
 function editQty(isbn) {
   var item = findCartItem(isbn);
   if (!item) return;
-  pendingBook = { isbn: item.isbn, title: item.title, edition: item.edition };
+  pendingBook = { isbn: item.isbn, title: item.title, edition: item.edition, found: item.found };
   openQty(String(item.qty));
 }
 
@@ -520,9 +527,10 @@ function renderCart(flashIsbn) {
   } else {
     cart.innerHTML = state.cart.map(function (it) {
       return '<div class="cart-item' + (it.isbn === flashIsbn ? ' flash' : '') + '">' +
-        '<div class="info"><div class="title">' + esc(it.title) +
+        '<div class="info"><div class="title">' +
+        (it.found ? '' : '<span class="badge-unreg">미등록</span> ') + esc(it.title) +
         (it.edition ? ' <span style="color:var(--muted);font-size:.95rem;font-weight:600;">' + esc(it.edition) + '</span>' : '') + '</div>' +
-        '<div class="isbn">ISBN ' + it.isbn + '</div></div>' +
+        '<div class="isbn">ISBN ' + it.isbn + (it.found ? '' : ' · 미등록반품 시트에 기록됩니다') + '</div></div>' +
         '<div class="qty-ctrl">' +
           '<button onclick="changeQty(\'' + it.isbn + '\',-1)">−</button>' +
           '<div class="qty" onclick="editQty(\'' + it.isbn + '\')">' + it.qty + '권</div>' +
@@ -540,11 +548,16 @@ function renderCart(flashIsbn) {
 /* ───────────────────── 4. 확인 / 제출 ───────────────────── */
 function goConfirm() {
   if (!state.cart.length) return;
+  var unregCount = state.cart.filter(function (it) { return !it.found; }).length;
   var html = '<table><tr><th>제목</th><th>판정보</th><th>ISBN</th><th style="text-align:right">권수</th></tr>' +
     state.cart.map(function (it) {
-      return '<tr><td>' + esc(it.title) + '</td><td>' + esc(it.edition || '-') + '</td><td>' + it.isbn + '</td><td class="num">' + it.qty + '</td></tr>';
+      return '<tr><td>' + (it.found ? '' : '<span class="badge-unreg">미등록</span> ') + esc(it.title) +
+        '</td><td>' + esc(it.edition || '-') + '</td><td>' + it.isbn + '</td><td class="num">' + it.qty + '</td></tr>';
     }).join('') +
-    '<tr><td colspan="3" style="font-weight:800">합계</td><td class="num">' + totalQty() + '</td></tr></table>';
+    '<tr><td colspan="3" style="font-weight:800">합계</td><td class="num">' + totalQty() + '</td></tr></table>' +
+    (unregCount
+      ? '<p style="margin-top:12px;color:var(--red);font-weight:700;">⚠ 미등록 도서 ' + unregCount + '종은 "미등록반품" 시트에 따로 기록됩니다</p>'
+      : '');
   document.getElementById('confirm-box').innerHTML = html;
   show('confirm');
 }
@@ -557,7 +570,8 @@ function submit() {
       document.getElementById('done-msg').textContent =
         state.course + (state.cohort ? ' · ' + state.cohort : '');
       document.getElementById('done-count').textContent =
-        '총 ' + totalQty() + '권의 반품이 기록되었습니다';
+        '총 ' + totalQty() + '권의 반품이 기록되었습니다' +
+        (res.unregistered ? ' (미등록 도서 ' + res.unregistered + '종은 미등록반품 시트에 기록)' : '');
       show('done');
       // 키오스크 자동 초기화
       setTimeout(function () { if (state.screen === 'done') resetAll(); }, 8000);
@@ -660,7 +674,7 @@ function kp(k) {
 function confirmQty() {
   var n = parseInt(qtyValue, 10);
   if (!n || n < 1) { toast('1권 이상 입력해주세요', true); return; }
-  if (pendingBook) addToCart(pendingBook.isbn, pendingBook.title, n, false);
+  if (pendingBook) addToCart(pendingBook.isbn, pendingBook.title, pendingBook.edition, n, false, pendingBook.found);
   closeQty();
 }
 
