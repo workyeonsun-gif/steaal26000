@@ -1073,10 +1073,16 @@ function runSearch() {
       searchResults = results || [];
       var box = document.getElementById('search-results');
       if (!searchResults.length) {
-        box.innerHTML = '<div id="search-empty">검색 결과가 없습니다.<br>도서목록 시트에 등록된 도서만 검색됩니다.</div>' +
+        box.innerHTML = '<div id="search-empty">검색 결과가 없습니다.<br>아래 방법 중 하나로 입력해주세요.</div>' +
           '<button class="search-result" onclick="addCustomTitle()">' +
           '<div class="t">＋ "' + esc(q) + '" 제목 그대로 추가</div>' +
-          '<div class="s">도서목록에 없는 도서 — 미등록반품 시트에 기록됩니다</div></button>';
+          '<div class="s">도서목록에 없는 도서 — 미등록반품 시트에 기록됩니다</div></button>' +
+          '<button class="search-result" onclick="closeSearch(); openIsbnPad();">' +
+          '<div class="t">🔢 ISBN 직접 입력으로 전환</div>' +
+          '<div class="s">도서 뒷면 바코드 아래 13자리 숫자를 키패드로 입력합니다</div></button>' +
+          '<button class="search-result" onclick="closeSearch(); openCamera(\'book\');">' +
+          '<div class="t">📷 카메라 스캔으로 전환</div>' +
+          '<div class="s">카메라 또는 사진 촬영으로 ISBN 바코드를 인식합니다</div></button>';
         return;
       }
       box.innerHTML = searchResults.map(function (b, i) {
