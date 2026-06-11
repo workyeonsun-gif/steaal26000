@@ -293,3 +293,170 @@ function submitReturn(payload) {
     damagedQty: damagedQty
   };
 }
+
+/* ─────────── 스프레드시트 상단 메뉴: 선택한 행 PDF 다운로드 ─────────── */
+
+var CHECKBOX_HEADER = '선택';
+
+/** 스프레드시트를 열면 상단에 커스텀 메뉴를 추가합니다. */
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('📦 반품 키오스크')
+    .addItem('☑️ 선택 체크박스 추가/정비', 'ensureCheckboxes')
+    .addSeparator()
+    .addItem('✅ 전체 선택 (현재 시트)', 'selectAllRows')
+    .addItem('⬜ 전체 선택 해제 (현재 시트)', 'deselectAllRows')
+    .addSeparator()
+    .addItem('📄 선택한 행 PDF 다운로드', 'downloadSelectedPdf')
+    .addToUi();
+}
+
+function pdfTargetSheets_() {
+  return [SHEET_RETURNS, SHEET_UNREGISTERED];
+}
+
+/** 시트에서 '선택' 체크박스 열 번호를 찾습니다. 없으면 0 */
+function checkboxCol_(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return 0;
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  for (var i = 0; i < headers.length; i++) {
+    if (String(headers[i]).trim() === CHECKBOX_HEADER) return i + 1;
+  }
+  return 0;
+}
+
+/** 반품기록·미등록반품 시트 맨 끝에 '선택' 체크박스 열을 만들고 정비합니다. */
+function ensureCheckboxes() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  pdfTargetSheets_().forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    var col = checkboxCol_(sheet);
+    if (!col) {
+      col = sheet.getLastColumn() + 1;
+      sheet.getRange(1, col).setValue(CHECKBOX_HEADER).setFontWeight('bold');
+    }
+    var maxRows = sheet.getMaxRows();
+    if (maxRows > 1) sheet.getRange(2, col, maxRows - 1, 1).insertCheckboxes();
+  });
+  ss.toast('반품기록·미등록반품 시트에 선택 체크박스를 준비했습니다.', '☑️ 완료', 5);
+}
+
+function setAllChecks_(checked) {
+  var sheet = SpreadsheetApp.getActiveSheet();
+  if (pdfTargetSheets_().indexOf(sheet.getName()) === -1) {
+    SpreadsheetApp.getUi().alert('⚠️ "' + SHEET_RETURNS + '" 또는 "' + SHEET_UNREGISTERED + '" 시트에서 실행해주세요.');
+    return;
+  }
+  var col = checkboxCol_(sheet);
+  if (!col) { ensureCheckboxes(); col = checkboxCol_(sheet); }
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, col, lastRow - 1, 1).insertCheckboxes().setValue(checked);
+  }
+  SpreadsheetApp.getActiveSpreadsheet()
+    .toast(sheet.getName() + ' 시트 ' + (lastRow - 1) + '행을 ' + (checked ? '전체 선택' : '전체 해제') + '했습니다.',
+      checked ? '✅ 전체 선택' : '⬜ 전체 해제', 5);
+}
+function selectAllRows() { setAllChecks_(true); }
+function deselectAllRows() { setAllChecks_(false); }
+
+/** 체크된 행의 표시값(서식 적용된 문자열) 배열을 반환합니다. */
+function selectedRows_(name) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name);
+  if (!sheet) return [];
+  var col = checkboxCol_(sheet);
+  if (!col) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var data = sheet.getRange(2, 1, lastRow - 1, col).getDisplayValues();
+  var checks = sheet.getRange(2, col, lastRow - 1, 1).getValues();
+  var out = [];
+  for (var i = 0; i < data.length; i++) {
+    if (checks[i][0] === true) out.push(data[i]);
+  }
+  return out;
+}
+
+/** 상태 셀을 키오스크 화면처럼 색으로 표시 */
+function statusCell_(s) {
+  s = String(s || '');
+  return s.indexOf('불가') !== -1
+    ? '<span class="bad">✕ ' + escapeHtml_(s) + '</span>'
+    : '<span class="ok">✓ ' + escapeHtml_(s) + '</span>';
+}
+
+/** 키오스크 확인 화면 스타일의 PDF용 HTML */
+function buildSelectedPdfHtml_(rets, unreg) {
+  var e = escapeHtml_;
+  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+    'body{font-family:"Malgun Gothic","Noto Sans KR",sans-serif;background:#f1f5f9;padding:28px;color:#0f172a}' +
+    'h1{font-size:22px;text-align:center;margin:0 0 6px}' +
+    '.sub{text-align:center;color:#64748b;font-size:11px;margin-bottom:18px}' +
+    '.card{background:#fff;border-radius:14px;padding:18px 20px;margin-bottom:18px;border:1px solid #e2e8f0}' +
+    'h2{font-size:14px;margin:0 0 10px}' +
+    'table{width:100%;border-collapse:collapse;font-size:11px}' +
+    'th{color:#64748b;font-weight:700;text-align:left;border-bottom:2px solid #e2e8f0;padding:7px 6px}' +
+    'td{border-bottom:1px solid #e2e8f0;padding:7px 6px}' +
+    '.n{text-align:right;font-weight:700}' +
+    '.ok{color:#16a34a;font-weight:700}.bad{color:#dc2626;font-weight:700}' +
+    '.total td{font-weight:800;border-bottom:none}' +
+    '</style></head><body>' +
+    '<h1>📚 도서 반품 내역 (개인고객)</h1>' +
+    '<div class="sub">생성일시: ' + now + '</div>';
+
+  var grand = 0;
+  if (rets.length) {
+    var sum = 0;
+    html += '<div class="card"><h2>반품기록 — ' + rets.length + '건</h2>' +
+      '<table><tr><th>반품일자</th><th>주문번호</th><th>고객명</th><th>제목</th><th>판정보</th><th>ISBN</th><th style="text-align:right">권수</th><th>상태</th></tr>';
+    rets.forEach(function (r) {
+      var qty = parseInt(r[7], 10) || 0; sum += qty;
+      html += '<tr><td>' + e(r[1]) + '</td><td>' + e(r[2]) + '</td><td>' + e(r[3]) + '</td>' +
+        '<td>' + e(r[5]) + '</td><td>' + e(r[6] || '-') + '</td><td>' + e(r[4]) + '</td>' +
+        '<td class="n">' + e(r[7]) + '</td><td>' + statusCell_(r[8]) + '</td></tr>';
+    });
+    html += '<tr class="total"><td colspan="6">합계</td><td class="n">' + sum + '</td><td></td></tr></table></div>';
+    grand += sum;
+  }
+  if (unreg.length) {
+    var sum2 = 0;
+    html += '<div class="card"><h2>미등록반품 — ' + unreg.length + '건</h2>' +
+      '<table><tr><th>반품일자</th><th>주문번호</th><th>고객명</th><th>제목</th><th>ISBN</th><th style="text-align:right">권수</th><th>상태</th></tr>';
+    unreg.forEach(function (r) {
+      var qty = parseInt(r[6], 10) || 0; sum2 += qty;
+      html += '<tr><td>' + e(r[1]) + '</td><td>' + e(r[2]) + '</td><td>' + e(r[3]) + '</td>' +
+        '<td>[미등록] ' + e(r[5]) + '</td><td>' + e(r[4] || '-') + '</td>' +
+        '<td class="n">' + e(r[6]) + '</td><td>' + statusCell_(r[7]) + '</td></tr>';
+    });
+    html += '<tr class="total"><td colspan="5">합계</td><td class="n">' + sum2 + '</td><td></td></tr></table></div>';
+    grand += sum2;
+  }
+  html += '<div class="sub">총 ' + grand + '권</div></body></html>';
+  return html;
+}
+
+/** 메뉴: 체크된 행만 모아 키오스크 스타일 PDF로 다운로드 */
+function downloadSelectedPdf() {
+  var rets = selectedRows_(SHEET_RETURNS);
+  var unreg = selectedRows_(SHEET_UNREGISTERED);
+  if (!rets.length && !unreg.length) {
+    SpreadsheetApp.getUi().alert('⚠️ 선택된 행이 없습니다.\n\n"☑️ 선택 체크박스 추가/정비"로 체크박스를 만든 뒤, PDF로 만들 행을 체크하고 다시 실행해주세요.');
+    return;
+  }
+  var pdf = Utilities.newBlob(buildSelectedPdfHtml_(rets, unreg), MimeType.HTML, 'r.html').getAs(MimeType.PDF);
+  var name = '반품내역_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') + '.pdf';
+  pdf.setName(name);
+  var b64 = Utilities.base64Encode(pdf.getBytes());
+  var dlg = HtmlService.createHtmlOutput(
+    '<style>body{font-family:sans-serif;text-align:center;padding:18px}' +
+    'a{display:inline-block;background:#2563eb;color:#fff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:bold}</style>' +
+    '<p>📄 ' + name + '</p>' +
+    '<p style="color:#64748b;font-size:13px">자동으로 다운로드되지 않으면 버튼을 눌러주세요</p>' +
+    '<a id="dl" download="' + name + '" href="data:application/pdf;base64,' + b64 + '">⬇️ 다운로드</a>' +
+    '<scr' + 'ipt>document.getElementById("dl").click();</scr' + 'ipt>'
+  ).setWidth(380).setHeight(190);
+  SpreadsheetApp.getUi().showModalDialog(dlg, '📄 PDF 다운로드');
+}
