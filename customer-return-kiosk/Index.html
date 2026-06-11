@@ -247,6 +247,30 @@
   .verify-table td { padding: 9px 10px; font-weight: 700; border-bottom: 1px solid #e2e8f0; }
   .verify-warn { margin-top: 10px; color: var(--red); font-weight: 700; text-align: center; }
 
+  /* 반품 내역 조회/수정 */
+  .hist-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; width: min(940px, 96vw); }
+  .hist-form .hf { display: flex; flex-direction: column; gap: 4px; }
+  .hist-form label { font-size: .85rem; color: var(--muted); font-weight: 700; }
+  .hist-form input { font-size: 1.05rem; padding: 10px 12px; border: 2px solid #cbd5e1; border-radius: 10px; min-width: 150px; }
+  .hist-notice {
+    background: #eff6ff; border: 1px solid #bfdbfe; color: var(--blue-dark);
+    border-radius: 10px; padding: 10px 14px; font-size: .95rem; width: min(940px, 96vw);
+  }
+  #hist-list { width: min(940px, 96vw); flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+  .hist-empty { color: var(--muted); text-align: center; padding: 30px 0; }
+  .hist-rec { background: var(--card); border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; }
+  .hist-rec.locked { background: #f8fafc; cursor: pointer; }
+  .hist-head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-size: .92rem; margin-bottom: 8px; }
+  .hist-head .sh { font-weight: 800; color: var(--blue); }
+  .hist-head .lk { color: var(--red); font-weight: 800; margin-left: auto; }
+  .hist-head .md { color: #d97706; font-weight: 700; }
+  .hist-fields { display: flex; gap: 10px; flex-wrap: wrap; }
+  .hist-fields .hf2 { display: flex; flex-direction: column; gap: 3px; }
+  .hist-fields label { font-size: .78rem; color: var(--muted); font-weight: 700; }
+  .hist-fields input, .hist-fields select { font-size: .98rem; padding: 8px 10px; border: 2px solid #e2e8f0; border-radius: 8px; min-width: 110px; }
+  .hist-fields input.changed, .hist-fields select.changed { border-color: #f59e0b; background: #fffbeb; }
+  .hist-fields input:disabled, .hist-fields select:disabled { background: #f1f5f9; color: #94a3b8; }
+
   /* 토스트 */
   #toast {
     position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%);
@@ -284,12 +308,23 @@
 </header>
 
 <main>
-  <!-- 0. 대기 화면: 고객명으로 시작 -->
+  <!-- 0. 대기 화면: 반품 입력 / 반품 내역 조회 택1 -->
   <section id="screen-idle" class="screen active">
-    <div class="scan-pulse">👤</div>
+    <div class="scan-pulse">📦</div>
     <h2>도서 반품 키오스크</h2>
-    <p class="hint">버튼을 눌러 고객명으로 반품을 시작하세요</p>
-    <button class="btn" onclick="startSession()">고객명으로 시작</button>
+    <p class="hint">원하는 작업을 선택하세요</p>
+    <div class="mode-cards">
+      <div class="mode-card" onclick="startSession()">
+        <div class="icon">📥</div>
+        <h3>반품 입력</h3>
+        <p>고객명을 입력하고<br>반품을 접수합니다</p>
+      </div>
+      <div class="mode-card" onclick="goHistory()">
+        <div class="icon">🔍</div>
+        <h3>반품 내역 조회</h3>
+        <p>날짜·고객명·주문번호·도서명으로<br>기록을 조회하고 수정합니다</p>
+      </div>
+    </div>
   </section>
 
   <!-- 1. 주문 정보 입력 (고객명 필수, 직접 입력 전용) -->
@@ -373,6 +408,25 @@
     <p class="hint" id="done-msg"></p>
     <p class="hint" id="done-count"></p>
     <button class="btn" onclick="resetAll()">처음으로</button>
+  </section>
+
+  <!-- 6. 반품 내역 조회/수정 -->
+  <section id="screen-history" class="screen" style="justify-content:flex-start; padding-top:18px;">
+    <h2 style="font-size:1.5rem;">🔍 반품 내역 조회/수정</h2>
+    <div class="hist-form">
+      <div class="hf"><label>날짜</label><input type="date" id="h-date"></div>
+      <div class="hf"><label>고객명</label><input type="text" id="h-customer" placeholder="일부만 입력 가능"></div>
+      <div class="hf"><label>주문번호</label><input type="text" id="h-order" placeholder="일부만 입력 가능"></div>
+      <div class="hf"><label>도서명</label><input type="text" id="h-title" placeholder="일부만 입력 가능"></div>
+      <button class="btn" style="min-width:0; padding:13px 22px; font-size:1.05rem;" onclick="runHistory()">🔎 조회</button>
+    </div>
+    <p class="hist-notice">ℹ️ 날짜를 지정하지 않고 검색하면 <b>검색일 기준 최근 30일 이내</b> 기록만 조회됩니다. 수정은 <b>입력일로부터 15일 이내</b>이고 <b>반품 처리가 완료되지 않은</b> 기록만 가능합니다.</p>
+    <div id="hist-info" style="color:var(--muted); font-size:.95rem; width:min(940px,96vw);"></div>
+    <div id="hist-list"><div class="hist-empty">조건을 입력하고 조회를 눌러주세요 (모두 비우면 최근 30일 전체)</div></div>
+    <div style="display:flex; gap:12px; align-items:center;">
+      <button class="btn ghost" onclick="resetAll()">← 처음으로</button>
+      <button class="btn green" id="hist-save" onclick="histSave()" disabled>💾 변경사항 저장</button>
+    </div>
   </section>
 </main>
 
@@ -480,6 +534,18 @@
   </div>
 </div>
 
+<!-- 수정 불가 알림 모달 -->
+<div class="modal" id="lock-modal">
+  <div class="modal-card">
+    <div style="font-size:3rem;">🚫</div>
+    <h3>수정이 불가한 내역입니다.<br>출판미디어사업부에 연락바랍니다.</h3>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+      <button class="btn secondary" onclick="closeLockAlert()">닫기</button>
+      <button class="btn" onclick="closeLockAlert(); resetAll();">🏠 최초 화면으로 돌아가기</button>
+    </div>
+  </div>
+</div>
+
 <div id="loading"><div class="spinner"></div></div>
 <div id="toast"></div>
 
@@ -495,7 +561,7 @@ var bookCache = {};         // isbn -> {found,isbn,title,...}
 var pendingBook = null;     // 키패드 입력 대상
 var scanJudgment = 'OK';    // 반복 스캔 모드의 현재 판정 ('OK'|'DAMAGED')
 
-var SCREEN_STEP = { idle: 0, order: 1, mode: 2, books: 3, confirm: 4, done: 4 };
+var SCREEN_STEP = { idle: 0, order: 1, mode: 2, books: 3, confirm: 4, done: 4, history: 0 };
 
 function todayStr() {
   var d = new Date();
@@ -557,6 +623,7 @@ function resetAll() {
   closeSearch();
   closeVerify();
   closeEmail();
+  closeLockAlert();
   verifyCtx = null;
   state.orderNo = ''; state.customer = ''; state.returnDate = ''; state.qrRaw = '';
   state.mode = ''; state.cart = [];
@@ -1199,6 +1266,111 @@ function addCustomTitle() {
     beep();
   }
 }
+
+/* ───────────────── 반품 내역 조회/수정 ───────────────── */
+var histData = null;
+
+function goHistory() {
+  document.getElementById('hist-list').innerHTML =
+    '<div class="hist-empty">조건을 입력하고 조회를 눌러주세요 (모두 비우면 최근 30일 전체)</div>';
+  document.getElementById('hist-info').textContent = '';
+  document.getElementById('hist-save').disabled = true;
+  show('history');
+}
+
+function runHistory() {
+  var criteria = {
+    date: document.getElementById('h-date').value,
+    customer: document.getElementById('h-customer').value.trim(),
+    orderNo: document.getElementById('h-order').value.trim(),
+    title: document.getElementById('h-title').value.trim()
+  };
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(renderHistory)
+    .withFailureHandler(function (err) {
+      showLoading(false);
+      toast('조회 실패: ' + err.message, true);
+    })
+    .searchRecords(criteria);
+}
+
+function renderHistory(res) {
+  showLoading(false);
+  histData = res;
+  document.getElementById('hist-info').textContent =
+    '조회 범위: ' + res.rangeNote + ' — ' + res.records.length + '건' +
+    (res.truncated ? ' (일부만 표시)' : '');
+  var list = document.getElementById('hist-list');
+  if (!res.records.length) {
+    list.innerHTML = '<div class="hist-empty">조건에 맞는 기록이 없습니다</div>';
+    document.getElementById('hist-save').disabled = true;
+    return;
+  }
+  list.innerHTML = res.records.map(function (r, ri) {
+    var fields = r.fields.map(function (f) {
+      var attrs = 'data-ri="' + ri + '" data-name="' + esc(f.name) + '" data-orig="' + esc(f.value) + '"' +
+        (r.editable ? '' : ' disabled') + ' oninput="histMark(this)" onchange="histMark(this)"';
+      var ctrl;
+      if (f.type === 'status') {
+        ctrl = '<select ' + attrs + '>' + ['반품 OK', '접수 불가(파손)'].map(function (o) {
+          return '<option' + (o === f.value ? ' selected' : '') + '>' + o + '</option>';
+        }).join('') + '</select>';
+      } else if (f.type === 'number') {
+        ctrl = '<input type="number" min="1" value="' + esc(f.value) + '" ' + attrs + ' style="min-width:80px">';
+      } else {
+        ctrl = '<input type="text" value="' + esc(f.value) + '" ' + attrs + '>';
+      }
+      return '<div class="hf2"><label>' + esc(f.name) + '</label>' + ctrl + '</div>';
+    }).join('');
+    return '<div class="hist-rec' + (r.editable ? '' : ' locked') + '"' +
+      (r.editable ? '' : ' onclick="showLockAlert()"') + '>' +
+      '<div class="hist-head"><span class="sh">[' + esc(r.sheet) + ']</span>' +
+      '<span>입력 ' + esc(r.ts) + '</span><span>' + esc(r.summary) + '</span>' +
+      (r.modified ? '<span class="md">✏️ ' + esc(r.modified) + (r.modifiedAt ? ' (' + esc(r.modifiedAt) + ')' : '') + '</span>' : '') +
+      (r.editable ? '' : '<span class="lk">🔒 ' + esc(r.lockReason || '수정 불가') + '</span>') +
+      '</div><div class="hist-fields">' + fields + '</div></div>';
+  }).join('');
+  document.getElementById('hist-save').disabled =
+    !res.records.some(function (r) { return r.editable; });
+}
+
+function histMark(el) {
+  el.classList.toggle('changed', el.value !== el.dataset.orig);
+}
+
+function histCollect() {
+  var byKey = {};
+  document.querySelectorAll('#hist-list [data-ri]').forEach(function (el) {
+    if (el.disabled || el.value === el.dataset.orig) return;
+    var r = histData.records[Number(el.dataset.ri)];
+    var key = r.sheet + '|' + r.row;
+    if (!byKey[key]) byKey[key] = { sheet: r.sheet, row: r.row, changes: {} };
+    byKey[key].changes[el.dataset.name] = el.value;
+  });
+  return Object.keys(byKey).map(function (k) { return byKey[k]; });
+}
+
+function histSave() {
+  var edits = histCollect();
+  if (!edits.length) { toast('변경된 항목이 없습니다', true); return; }
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(function (res) {
+      showLoading(false);
+      if (res.updated) toast('✅ ' + res.updated + '개 항목이 수정되었습니다 (수정이력에 기록됨)');
+      if (res.blocked && res.blocked.length) showLockAlert();
+      runHistory();   // 최신 값으로 다시 조회
+    })
+    .withFailureHandler(function (err) {
+      showLoading(false);
+      toast('저장 실패: ' + err.message, true);
+    })
+    .saveRecordEdits(edits);
+}
+
+function showLockAlert() { document.getElementById('lock-modal').classList.add('open'); }
+function closeLockAlert() { document.getElementById('lock-modal').classList.remove('open'); }
 
 /* ───────────────────── 공통 유틸 ───────────────────── */
 function esc(s) {

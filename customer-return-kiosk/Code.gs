@@ -57,6 +57,38 @@ function setupSheets() {
   }
 
   ensureUnregisteredSheet_(ss);
+  ensureMetaColumns_(ss);
+}
+
+/* 수정 추적용 메타 열: 수정발생 | 수정일 | 반품처리완료(체크박스) */
+var COL_MODIFIED = '수정발생';
+var COL_MODIFIED_AT = '수정일';
+var COL_DONE = '반품처리완료';
+
+/** 반품기록·미등록반품 시트에 메타 열이 없으면 추가합니다. ('선택' 체크박스 열 앞에 삽입) */
+function ensureMetaColumns_(ss) {
+  [SHEET_RETURNS, SHEET_UNREGISTERED].forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    [COL_MODIFIED, COL_MODIFIED_AT, COL_DONE].forEach(function (h) {
+      var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+      if (headers.indexOf(h) !== -1) return;
+      var selIdx = headers.indexOf('선택');
+      var col;
+      if (selIdx !== -1) {
+        sheet.insertColumnBefore(selIdx + 1);
+        col = selIdx + 1;
+      } else {
+        col = sheet.getLastColumn() + 1;
+      }
+      sheet.getRange(1, col).setValue(h).setFontWeight('bold');
+    });
+    var headers2 = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
+    var doneCol = headers2.indexOf(COL_DONE) + 1;
+    if (doneCol > 0 && sheet.getMaxRows() > 1) {
+      sheet.getRange(2, doneCol, sheet.getMaxRows() - 1, 1).insertCheckboxes();
+    }
+  });
 }
 
 /** 미등록반품 시트가 없으면 만들어서 돌려줍니다. */
@@ -502,34 +534,69 @@ function openManageDialog() {
   SpreadsheetApp.getUi().showModalDialog(html, '🔎 반품 기록 조회/수정');
 }
 
-/** 선택한 날짜(접수일 기준)의 반품기록·미등록반품 행을 반환 */
-function getRecordsByDate(dateStr) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) throw new Error('날짜 형식이 올바르지 않습니다.');
+var SEARCH_RANGE_DAYS = 30;   // 날짜 없이 검색할 때 조회 범위 (검색일 기준)
+var SEARCH_MAX_RESULTS = 200;
+
+/**
+ * 히스토리 검색: 날짜 / 고객명 / 주문번호 / 도서명 조합으로 조회합니다.
+ * 날짜를 지정하지 않으면 검색일 기준 최근 SEARCH_RANGE_DAYS일 이내로 제한됩니다.
+ * @param {Object} criteria {date:'yyyy-MM-dd'|'', customer:'', orderNo:'', title:''}
+ */
+function searchRecords(criteria) {
+  criteria = criteria || {};
+  var dateStr = String(criteria.date || '').trim();
+  var hasDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+  var norm = function (s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); };
+  var qCustomer = norm(criteria.customer);
+  var qOrder = norm(criteria.orderNo);
+  var qTitle = norm(criteria.title);
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tz = Session.getScriptTimeZone();
   var fieldsBySheet = editableFields_();
+  var minTs = Date.now() - SEARCH_RANGE_DAYS * 86400000;
   var records = [];
+  var truncated = false;
+
   pdfTargetSheets_().forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (!sheet || sheet.getLastRow() < 2) return;
     var lastCol = sheet.getLastColumn();
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    var customerIdx = headers.indexOf('고객명');
+    var orderIdx = headers.indexOf('주문번호');
+    var titleIdx = headers.indexOf('제목');
+    var isbnIdx = headers.indexOf('ISBN');
+    var doneIdx = headers.indexOf(COL_DONE);
+    var modIdx = headers.indexOf(COL_MODIFIED);
+    var modAtIdx = headers.indexOf(COL_MODIFIED_AT);
     var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
     var disp = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
     for (var i = 0; i < values.length; i++) {
       var ts = values[i][0];
       if (!(ts instanceof Date)) continue;
-      if (Utilities.formatDate(ts, tz, 'yyyy-MM-dd') !== dateStr) continue;
-      var editable = (Date.now() - ts.getTime()) / 86400000 <= EDIT_LIMIT_DAYS;
-      var titleIdx = headers.indexOf('제목');
-      var isbnIdx = headers.indexOf('ISBN');
+      // 날짜 지정 시 그 날짜만, 미지정 시 최근 30일 이내만
+      if (hasDate) {
+        if (Utilities.formatDate(ts, tz, 'yyyy-MM-dd') !== dateStr) continue;
+      } else if (ts.getTime() < minTs) {
+        continue;
+      }
+      if (qCustomer && (customerIdx === -1 || norm(disp[i][customerIdx]).indexOf(qCustomer) === -1)) continue;
+      if (qOrder && (orderIdx === -1 || norm(disp[i][orderIdx]).indexOf(qOrder) === -1)) continue;
+      if (qTitle && (titleIdx === -1 || norm(disp[i][titleIdx]).indexOf(qTitle) === -1)) continue;
+      if (records.length >= SEARCH_MAX_RESULTS) { truncated = true; break; }
+      var within = (Date.now() - ts.getTime()) / 86400000 <= EDIT_LIMIT_DAYS;
+      var done = doneIdx > -1 && values[i][doneIdx] === true;   // 반품처리완료 체크 시 기간 무관 수정 불가
       records.push({
         sheet: name,
         row: i + 2,
         ts: Utilities.formatDate(ts, tz, 'yyyy-MM-dd HH:mm'),
         summary: (titleIdx > -1 ? disp[i][titleIdx] : '') +
           (isbnIdx > -1 && disp[i][isbnIdx] ? ' · ISBN ' + disp[i][isbnIdx] : ''),
-        editable: editable,
+        editable: within && !done,
+        lockReason: done ? '반품 처리 완료' : (!within ? '입력일로부터 ' + EDIT_LIMIT_DAYS + '일 경과' : ''),
+        modified: modIdx > -1 ? disp[i][modIdx] : '',
+        modifiedAt: modAtIdx > -1 ? disp[i][modAtIdx] : '',
         fields: (fieldsBySheet[name] || []).map(function (fn) {
           var ci = headers.indexOf(fn);
           return { name: fn, value: ci === -1 ? '' : disp[i][ci], type: fieldType_(fn) };
@@ -537,7 +604,17 @@ function getRecordsByDate(dateStr) {
       });
     }
   });
-  return { date: dateStr, limitDays: EDIT_LIMIT_DAYS, records: records };
+
+  var rangeNote = hasDate
+    ? dateStr + ' (해당 날짜의 입력 기록)'
+    : Utilities.formatDate(new Date(minTs), tz, 'yyyy-MM-dd') + ' ~ 오늘 (최근 ' + SEARCH_RANGE_DAYS + '일)';
+  return {
+    limitDays: EDIT_LIMIT_DAYS,
+    rangeDays: SEARCH_RANGE_DAYS,
+    rangeNote: rangeNote,
+    truncated: truncated,
+    records: records
+  };
 }
 
 /**
@@ -556,20 +633,27 @@ function saveRecordEdits(edits) {
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
+    ensureMetaColumns_(ss);
     var audit = ensureAuditSheet_(ss);
     edits.forEach(function (ed) {
       var sheet = ss.getSheetByName(ed.sheet);
       var allowed = fieldsBySheet[ed.sheet];
       if (!sheet || !allowed) return;
+      var lastCol = sheet.getLastColumn();
+      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
       var ts = sheet.getRange(ed.row, 1).getValue();
-      // 서버에서도 15일 제한을 다시 검증 (화면 우회 방지)
+      // 서버에서도 잠금 조건을 다시 검증 (화면 우회 방지)
       if (!(ts instanceof Date) || (Date.now() - ts.getTime()) / 86400000 > EDIT_LIMIT_DAYS) {
         blocked.push(ed.sheet + ' ' + ed.row + '행 — 입력일로부터 ' + EDIT_LIMIT_DAYS + '일이 지나 수정할 수 없습니다');
         return;
       }
-      var lastCol = sheet.getLastColumn();
-      var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+      var doneIdx = headers.indexOf(COL_DONE);
+      if (doneIdx > -1 && sheet.getRange(ed.row, doneIdx + 1).getValue() === true) {
+        blocked.push(ed.sheet + ' ' + ed.row + '행 — 반품 처리가 완료된 내역은 수정할 수 없습니다');
+        return;
+      }
       var now = new Date();
+      var rowUpdated = 0;
       Object.keys(ed.changes || {}).forEach(function (fn) {
         if (allowed.indexOf(fn) === -1) return;
         var ci = headers.indexOf(fn);
@@ -585,8 +669,16 @@ function saveRecordEdits(edits) {
         if (oldVal === newVal) return;
         cell.setValue(fn === '권수' ? parseInt(newVal, 10) : newVal);
         audit.appendRow([now, ed.sheet, ed.row, fn, oldVal, newVal, user]);
+        rowUpdated++;
         updated++;
       });
+      // 수정이 발생한 행에는 수정발생/수정일 표시
+      if (rowUpdated) {
+        var modIdx = headers.indexOf(COL_MODIFIED);
+        var modAtIdx = headers.indexOf(COL_MODIFIED_AT);
+        if (modIdx > -1) sheet.getRange(ed.row, modIdx + 1).setValue('수정됨');
+        if (modAtIdx > -1) sheet.getRange(ed.row, modAtIdx + 1).setValue(now);
+      }
     });
     SpreadsheetApp.flush();
   } finally {

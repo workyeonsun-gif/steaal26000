@@ -112,7 +112,7 @@ function render(res) {
       '<div class="rec-head"><span class="sheet">[' + esc(r.sheet) + '] ' + r.row + '행</span>' +
       '<span class="ts">입력 ' + esc(r.ts) + '</span>' +
       '<span>' + esc(r.summary) + '</span>' +
-      (r.editable ? '' : '<span class="lock">🔒 ' + current.limitDays + '일 경과 — 수정 불가</span>') +
+      (r.editable ? '' : '<span class="lock">🔒 ' + esc(r.lockReason || '수정 불가') + '</span>') +
       '</div><div class="fields">' + fields + '</div></div>';
   }).join('');
   document.getElementById('save-btn').disabled = false;
