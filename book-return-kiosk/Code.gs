@@ -3,8 +3,8 @@
  *
  * 시트 구성
  *  - 도서목록   : ISBN | 제목 | 판정보(초판, 개정 2판 등) | 발간일 | 출판사   (도서 마스터, 관리자가 채움)
- *  - 반품기록   : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 판정보 | 권수 | 입력방식 | QR원문
- *  - 미등록반품 : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 권수 | 입력방식 | QR원문
+ *  - 반품기록   : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 판정보 | 권수 | 입력방식 | QR원문 | 입력자
+ *  - 미등록반품 : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 권수 | 입력방식 | QR원문 | 입력자
  *               (도서목록에 없는 ISBN 스캔분과 사용자가 직접 입력한 제목의 반품이 이 시트에 기록됩니다)
  */
 
@@ -43,8 +43,8 @@ function setupSheets() {
   var rets = ss.getSheetByName(SHEET_RETURNS);
   if (!rets) {
     rets = ss.insertSheet(SHEET_RETURNS);
-    rets.getRange(1, 1, 1, 10)
-      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '판정보', '권수', '입력방식', 'QR원문']])
+    rets.getRange(1, 1, 1, 11)
+      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '판정보', '권수', '입력방식', 'QR원문', '입력자']])
       .setFontWeight('bold');
     rets.setFrozenRows(1);
     rets.getRange('E:E').setNumberFormat('@');
@@ -61,8 +61,8 @@ function ensureUnregisteredSheet_(ss) {
   var sheet = ss.getSheetByName(SHEET_UNREGISTERED);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_UNREGISTERED);
-    sheet.getRange(1, 1, 1, 9)
-      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '권수', '입력방식', 'QR원문']])
+    sheet.getRange(1, 1, 1, 10)
+      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '권수', '입력방식', 'QR원문', '입력자']])
       .setFontWeight('bold');
     sheet.setFrozenRows(1);
     sheet.getRange('E:E').setNumberFormat('@');
@@ -225,6 +225,7 @@ function submitReturn(payload) {
   var course = String(payload.course || '').trim();
   var cohort = String(payload.cohort || '').trim();
   var startDate = String(payload.startDate || '').trim();
+  var operator = String(payload.operator || '').trim();   // 입력자 이름 (선택값)
   if (!course) throw new Error('연수 과정 정보가 없습니다.');
 
   var modeLabel = payload.mode === 'scan' ? '바코드 반복 스캔' : '수기 입력';
@@ -237,9 +238,9 @@ function submitReturn(payload) {
     var qty = Math.max(1, parseInt(it.qty, 10) || 1);
     var isbn = normalizeIsbn_(it.isbn);
     if (it.found) {
-      registeredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), String(it.edition || ''), qty, modeLabel, qrRaw]);
+      registeredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), String(it.edition || ''), qty, modeLabel, qrRaw, operator]);
     } else {
-      unregisteredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), qty, modeLabel, qrRaw]);
+      unregisteredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), qty, modeLabel, qrRaw, operator]);
     }
   });
 
@@ -431,8 +432,8 @@ var EDIT_LIMIT_DAYS = 15;   // 입력일로부터 이 기간이 지나면 수정
 /** 시트별 수정 허용 항목 (그 외 열은 화면에서 수정 불가) */
 function editableFields_() {
   return {
-    '반품기록': ['연수과정', '기수', '개강일', '권수'],
-    '미등록반품': ['연수과정', '기수', '개강일', '제목', '권수']
+    '반품기록': ['연수과정', '기수', '개강일', '권수', '입력자'],
+    '미등록반품': ['연수과정', '기수', '개강일', '제목', '권수', '입력자']
   };
 }
 
@@ -462,27 +463,55 @@ function openManageDialog() {
   SpreadsheetApp.getUi().showModalDialog(html, '🔎 반품 기록 조회/수정');
 }
 
-/** 선택한 날짜(입력일 기준)의 반품기록·미등록반품 행을 반환 */
-function getRecordsByDate(dateStr) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) throw new Error('날짜 형식이 올바르지 않습니다.');
+var SEARCH_RANGE_DAYS = 30;   // 날짜 없이 검색할 때 조회 범위 (검색일 기준)
+var SEARCH_MAX_RESULTS = 200;
+
+/**
+ * 히스토리 검색: 날짜 / 연수과정명 / 도서명 / 입력자 조합으로 조회합니다.
+ * 날짜를 지정하지 않으면 검색일 기준 최근 SEARCH_RANGE_DAYS일 이내로 제한됩니다.
+ * @param {Object} criteria {date:'yyyy-MM-dd'|'', course:'', title:'', operator:''}
+ */
+function searchRecords(criteria) {
+  criteria = criteria || {};
+  var dateStr = String(criteria.date || '').trim();
+  var hasDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr);
+  var norm = function (s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); };
+  var qCourse = norm(criteria.course);
+  var qTitle = norm(criteria.title);
+  var qOper = norm(criteria.operator);
+
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tz = Session.getScriptTimeZone();
   var fieldsBySheet = editableFields_();
+  var minTs = Date.now() - SEARCH_RANGE_DAYS * 86400000;
   var records = [];
+  var truncated = false;
+
   pdfTargetSheets_().forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (!sheet || sheet.getLastRow() < 2) return;
     var lastCol = sheet.getLastColumn();
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    var courseIdx = headers.indexOf('연수과정');
+    var titleIdx = headers.indexOf('제목');
+    var operIdx = headers.indexOf('입력자');
+    var isbnIdx = headers.indexOf('ISBN');
     var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
     var disp = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
     for (var i = 0; i < values.length; i++) {
       var ts = values[i][0];
       if (!(ts instanceof Date)) continue;
-      if (Utilities.formatDate(ts, tz, 'yyyy-MM-dd') !== dateStr) continue;
+      // 날짜 지정 시 그 날짜만, 미지정 시 최근 30일 이내만
+      if (hasDate) {
+        if (Utilities.formatDate(ts, tz, 'yyyy-MM-dd') !== dateStr) continue;
+      } else if (ts.getTime() < minTs) {
+        continue;
+      }
+      if (qCourse && (courseIdx === -1 || norm(disp[i][courseIdx]).indexOf(qCourse) === -1)) continue;
+      if (qTitle && (titleIdx === -1 || norm(disp[i][titleIdx]).indexOf(qTitle) === -1)) continue;
+      if (qOper && (operIdx === -1 || norm(disp[i][operIdx]).indexOf(qOper) === -1)) continue;
+      if (records.length >= SEARCH_MAX_RESULTS) { truncated = true; break; }
       var editable = (Date.now() - ts.getTime()) / 86400000 <= EDIT_LIMIT_DAYS;
-      var titleIdx = headers.indexOf('제목');
-      var isbnIdx = headers.indexOf('ISBN');
       records.push({
         sheet: name,
         row: i + 2,
@@ -497,7 +526,17 @@ function getRecordsByDate(dateStr) {
       });
     }
   });
-  return { date: dateStr, limitDays: EDIT_LIMIT_DAYS, records: records };
+
+  var rangeNote = hasDate
+    ? dateStr + ' (해당 날짜의 입력 기록)'
+    : Utilities.formatDate(new Date(minTs), tz, 'yyyy-MM-dd') + ' ~ 오늘 (최근 ' + SEARCH_RANGE_DAYS + '일)';
+  return {
+    limitDays: EDIT_LIMIT_DAYS,
+    rangeDays: SEARCH_RANGE_DAYS,
+    rangeNote: rangeNote,
+    truncated: truncated,
+    records: records
+  };
 }
 
 /**
