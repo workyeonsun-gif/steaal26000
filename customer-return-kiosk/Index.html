@@ -449,6 +449,7 @@
       <button class="btn secondary" onclick="closeCamera()">닫기</button>
     </div>
     <p style="color:var(--muted); font-size:.92rem; text-align:center;">실시간 카메라가 켜지지 않으면 "사진 찍어 인식"을 이용하세요</p>
+    <div id="photo-status" style="color:var(--blue-dark); font-size:.95rem; font-weight:700; text-align:center;"></div>
   </div>
 </div>
 <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none">
@@ -1008,6 +1009,7 @@ function onPhotoPicked(e) {
   e.target.value = '';   // 같은 사진을 다시 선택해도 change가 발생하도록 초기화
   if (!file) return;
   showLoading(true);
+  setPhotoStatus('🖼 사진 변환 중…');
   // 아이폰 HEIC/초고해상도 사진은 그대로는 해독에 실패하므로
   // 캔버스로 JPEG 변환·축소한 여러 버전을 만들어 차례로 시도합니다.
   buildPhotoCandidates(file, function (candidates) {
@@ -1016,28 +1018,64 @@ function onPhotoPicked(e) {
   });
 }
 
-/** 사진을 캔버스로 변환해 인식 후보 4종(축소 1600/2400/1000 + 중앙 60% 확대) 생성 */
+/**
+ * 사진을 캔버스로 변환해 인식 후보를 생성합니다.
+ * 어두운 라벨 사진을 위한 흑백·대비강화 버전과,
+ * 바코드를 가운데 두고 찍는 촬영 습관에 맞춘 중앙 60%/40% 확대 버전을 포함합니다.
+ */
 function buildPhotoCandidates(file, cb) {
   var url = URL.createObjectURL(file);
   var img = new Image();
   img.onload = function () {
-    var jobs = [];
-    [1600, 2400, 1000].forEach(function (target) {
-      var scale = Math.min(1, target / Math.max(img.width, img.height));
-      jobs.push({ sx: 0, sy: 0, sw: img.width, sh: img.height, scale: scale });
-    });
-    // 바코드를 가운데 두고 찍은 경우를 위한 중앙 60% 확대 버전
-    var cw = Math.round(img.width * 0.6), ch = Math.round(img.height * 0.6);
-    jobs.push({
-      sx: Math.round((img.width - cw) / 2), sy: Math.round((img.height - ch) / 2),
-      sw: cw, sh: ch, scale: Math.min(1, 1600 / Math.max(cw, ch))
-    });
-    var files = [], pending = jobs.length;
-    jobs.forEach(function (j, idx) {
+    function makeCanvas(sx, sy, sw, sh, target) {
+      var scale = Math.min(1, target / Math.max(sw, sh));
       var c = document.createElement('canvas');
-      c.width = Math.max(1, Math.round(j.sw * j.scale));
-      c.height = Math.max(1, Math.round(j.sh * j.scale));
-      c.getContext('2d').drawImage(img, j.sx, j.sy, j.sw, j.sh, 0, 0, c.width, c.height);
+      c.width = Math.max(1, Math.round(sw * scale));
+      c.height = Math.max(1, Math.round(sh * scale));
+      c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, c.width, c.height);
+      return c;
+    }
+    // 흑백 변환 + 대비 강화(어둡거나 회색빛 사진의 막대 경계를 선명하게)
+    function enhance(src) {
+      var c = document.createElement('canvas');
+      c.width = src.width; c.height = src.height;
+      var ctx = c.getContext('2d');
+      ctx.drawImage(src, 0, 0);
+      var d = ctx.getImageData(0, 0, c.width, c.height);
+      var px = d.data, min = 255, max = 0, i, g;
+      for (i = 0; i < px.length; i += 4) {
+        g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+        if (g < min) min = g;
+        if (g > max) max = g;
+      }
+      var range = Math.max(1, max - min);
+      for (i = 0; i < px.length; i += 4) {
+        g = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+        g = (g - min) * 255 / range;
+        px[i] = px[i + 1] = px[i + 2] = g;
+      }
+      ctx.putImageData(d, 0, 0);
+      return c;
+    }
+    function centerCrop(ratio, target) {
+      var cw = Math.round(img.width * ratio), ch = Math.round(img.height * ratio);
+      return makeCanvas(Math.round((img.width - cw) / 2), Math.round((img.height - ch) / 2), cw, ch, target);
+    }
+
+    var full = makeCanvas(0, 0, img.width, img.height, 1600);
+    var c60 = centerCrop(0.6, 1600);
+    // 성공 확률이 높은 순서로 배치 (첫 성공에서 중단되므로 순서가 속도를 좌우)
+    var canvases = [
+      c60,                       // 중앙 60% (바코드를 가운데 두고 찍는 경우)
+      enhance(c60),              // 중앙 60% + 대비 강화 (어두운 라벨 사진)
+      full,                      // 전체 1600px
+      enhance(full),             // 전체 + 대비 강화
+      centerCrop(0.4, 1600),     // 중앙 40% (바코드가 작게 찍힌 경우)
+      makeCanvas(0, 0, img.width, img.height, 2400),
+      makeCanvas(0, 0, img.width, img.height, 1000)
+    ];
+    var files = [], pending = canvases.length;
+    canvases.forEach(function (c, idx) {
       c.toBlob(function (blob) {
         files[idx] = blob ? new File([blob], 'scan' + idx + '.jpg', { type: 'image/jpeg' }) : null;
         if (--pending === 0) {
@@ -1055,12 +1093,19 @@ function buildPhotoCandidates(file, cb) {
 }
 
 /** 후보 이미지를 순서대로 해독 시도, 첫 성공에서 중단 */
+function setPhotoStatus(msg) {
+  var el = document.getElementById('photo-status');
+  if (el) el.textContent = msg || '';
+}
+
 function tryScanCandidates(candidates, idx) {
   if (idx >= candidates.length) {
     showLoading(false);
-    toast('사진에서 코드를 인식하지 못했습니다. 코드가 화면에 크고 선명하게 나오도록 가까이서 다시 찍어주세요.', true);
+    setPhotoStatus('❌ ' + candidates.length + '가지 보정본 모두 인식 실패');
+    toast('사진에서 코드를 인식하지 못했습니다. 바코드가 화면의 1/2 이상을 차지하게 가까이서, 정면에서 다시 찍어주세요.', true);
     return;
   }
+  setPhotoStatus('🔍 인식 시도 중… (' + (idx + 1) + '/' + candidates.length + ')');
   try {
     if (!photoScanner) photoScanner = new Html5Qrcode('photo-reader');
     var p = photoScanner.scanFileV2
@@ -1068,12 +1113,14 @@ function tryScanCandidates(candidates, idx) {
       : photoScanner.scanFile(candidates[idx], false);
     p.then(function (text) {
       showLoading(false);
+      setPhotoStatus('');
       startVerifyFromScan(text, 'photo');   // 사진 인식 결과도 확인창을 거쳐 적용
     }).catch(function () {
       tryScanCandidates(candidates, idx + 1);
     });
   } catch (err) {
     showLoading(false);
+    setPhotoStatus('');
     toast('사진 인식 실패: ' + err, true);
   }
 }
@@ -1161,6 +1208,7 @@ function switchToDirectInput() {
 function closeCamera() {
   document.getElementById('camera-modal').classList.remove('open');
   hideCameraError();
+  setPhotoStatus('');
   if (html5Qr) {
     var inst = html5Qr; html5Qr = null;
     inst.stop().then(function () { inst.clear(); }).catch(function () {});
