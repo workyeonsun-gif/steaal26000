@@ -1314,7 +1314,7 @@ function histCollect() {
     if (el.disabled || el.value === el.dataset.orig) return;
     var r = histData.records[Number(el.dataset.ri)];
     var key = r.sheet + '|' + r.row;
-    if (!byKey[key]) byKey[key] = { sheet: r.sheet, row: r.row, changes: {} };
+    if (!byKey[key]) byKey[key] = { sheet: r.sheet, row: r.row, ts: r.ts, changes: {} };
     byKey[key].changes[el.dataset.name] = el.value;
   });
   return Object.keys(byKey).map(function (k) { return byKey[k]; });

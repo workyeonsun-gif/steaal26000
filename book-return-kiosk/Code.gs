@@ -82,8 +82,13 @@ function ensureMetaColumns_(ss) {
     });
     var headers2 = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(String);
     var doneCol = headers2.indexOf(COL_DONE) + 1;
-    if (doneCol > 0 && sheet.getMaxRows() > 1) {
-      sheet.getRange(2, doneCol, sheet.getMaxRows() - 1, 1).insertCheckboxes();
+    if (doneCol > 0) {
+      var lastData = lastDataRow_(sheet);
+      if (lastData > 1) sheet.getRange(2, doneCol, lastData - 1, 1).insertCheckboxes();
+      // 데이터가 없는 아래 행에 남은 FALSE 값을 지워 getLastRow가 부풀지 않게 함
+      if (sheet.getMaxRows() > lastData) {
+        sheet.getRange(lastData + 1, doneCol, sheet.getMaxRows() - lastData, 1).clearContent();
+      }
     }
   });
 }
@@ -109,6 +114,19 @@ function ensureUnregisteredSheet_(ss) {
 /** 바코드에서 읽힌 문자열을 ISBN 비교용으로 정규화 (숫자와 X만 남김) */
 function normalizeIsbn_(raw) {
   return String(raw || '').toUpperCase().replace(/[^0-9X]/g, '');
+}
+
+/**
+ * A열(입력일시) 기준 실제 데이터의 마지막 행 번호.
+ * 체크박스 FALSE 값 등으로 부풀려진 getLastRow() 대신 사용해
+ * 새 기록이 항상 기존 데이터 바로 다음 행에 쓰이도록 보장합니다.
+ */
+function lastDataRow_(sheet) {
+  var vals = sheet.getRange(1, 1, sheet.getMaxRows(), 1).getValues();
+  for (var i = vals.length - 1; i >= 0; i--) {
+    if (vals[i][0] !== '' && vals[i][0] !== null) return i + 1;
+  }
+  return 1;
 }
 
 /**
@@ -283,11 +301,11 @@ function submitReturn(payload) {
     if (registeredRows.length) {
       var sheet = ss.getSheetByName(SHEET_RETURNS);
       if (!sheet) throw new Error('"' + SHEET_RETURNS + '" 시트가 없습니다. setupSheets를 먼저 실행하세요.');
-      sheet.getRange(sheet.getLastRow() + 1, 1, registeredRows.length, registeredRows[0].length).setValues(registeredRows);
+      sheet.getRange(lastDataRow_(sheet) + 1, 1, registeredRows.length, registeredRows[0].length).setValues(registeredRows);
     }
     if (unregisteredRows.length) {
       var unregSheet = ensureUnregisteredSheet_(ss);
-      unregSheet.getRange(unregSheet.getLastRow() + 1, 1, unregisteredRows.length, unregisteredRows[0].length).setValues(unregisteredRows);
+      unregSheet.getRange(lastDataRow_(unregSheet) + 1, 1, unregisteredRows.length, unregisteredRows[0].length).setValues(unregisteredRows);
     }
     SpreadsheetApp.flush();
   } finally {
@@ -341,8 +359,12 @@ function ensureCheckboxes() {
       col = sheet.getLastColumn() + 1;
       sheet.getRange(1, col).setValue(CHECKBOX_HEADER).setFontWeight('bold');
     }
-    var maxRows = sheet.getMaxRows();
-    if (maxRows > 1) sheet.getRange(2, col, maxRows - 1, 1).insertCheckboxes();
+    var lastData = lastDataRow_(sheet);
+    if (lastData > 1) sheet.getRange(2, col, lastData - 1, 1).insertCheckboxes();
+    // 데이터가 없는 아래 행에 남은 FALSE 값을 지워 getLastRow가 부풀지 않게 함
+    if (sheet.getMaxRows() > lastData) {
+      sheet.getRange(lastData + 1, col, sheet.getMaxRows() - lastData, 1).clearContent();
+    }
   });
   ss.toast('반품기록·미등록반품 시트에 선택 체크박스를 준비했습니다.', '☑️ 완료', 5);
 }
@@ -355,7 +377,7 @@ function setAllChecks_(checked) {
   }
   var col = checkboxCol_(sheet);
   if (!col) { ensureCheckboxes(); col = checkboxCol_(sheet); }
-  var lastRow = sheet.getLastRow();
+  var lastRow = lastDataRow_(sheet);
   if (lastRow > 1) {
     sheet.getRange(2, col, lastRow - 1, 1).insertCheckboxes().setValue(checked);
   }
@@ -372,7 +394,7 @@ function selectedRows_(name) {
   if (!sheet) return [];
   var col = checkboxCol_(sheet);
   if (!col) return [];
-  var lastRow = sheet.getLastRow();
+  var lastRow = lastDataRow_(sheet);
   if (lastRow < 2) return [];
   var data = sheet.getRange(2, 1, lastRow - 1, col).getDisplayValues();
   var checks = sheet.getRange(2, col, lastRow - 1, 1).getValues();
@@ -521,7 +543,9 @@ function searchRecords(criteria) {
 
   pdfTargetSheets_().forEach(function (name) {
     var sheet = ss.getSheetByName(name);
-    if (!sheet || sheet.getLastRow() < 2) return;
+    if (!sheet) return;
+    var lastDataR = lastDataRow_(sheet);
+    if (lastDataR < 2) return;
     var lastCol = sheet.getLastColumn();
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
     var courseIdx = headers.indexOf('연수과정');
@@ -531,8 +555,8 @@ function searchRecords(criteria) {
     var doneIdx = headers.indexOf(COL_DONE);
     var modIdx = headers.indexOf(COL_MODIFIED);
     var modAtIdx = headers.indexOf(COL_MODIFIED_AT);
-    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
-    var disp = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getDisplayValues();
+    var values = sheet.getRange(2, 1, lastDataR - 1, lastCol).getValues();
+    var disp = sheet.getRange(2, 1, lastDataR - 1, lastCol).getDisplayValues();
     for (var i = 0; i < values.length; i++) {
       var ts = values[i][0];
       if (!(ts instanceof Date)) continue;
@@ -612,6 +636,14 @@ function saveRecordEdits(edits) {
       if (doneIdx > -1 && sheet.getRange(ed.row, doneIdx + 1).getValue() === true) {
         blocked.push(ed.sheet + ' ' + ed.row + '행 — 반품 처리가 완료된 내역은 수정할 수 없습니다');
         return;
+      }
+      // 조회 후 시트가 정렬/삭제되어 행 번호가 어긋났으면 엉뚱한 행 수정을 차단
+      if (ed.ts) {
+        var tsStr = Utilities.formatDate(ts, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+        if (ed.ts !== tsStr) {
+          blocked.push(ed.sheet + ' ' + ed.row + '행 — 시트 내용이 변경되어 수정하지 않았습니다. 다시 조회한 뒤 시도해주세요');
+          return;
+        }
       }
       var now = new Date();
       var rowUpdated = 0;
