@@ -148,10 +148,11 @@ function searchBooks(query) {
  * 반품 내역을 기록합니다.
  *  - 도서목록에 있는 도서   → 반품기록 시트
  *  - 도서목록에 없는 도서   → 미등록반품 시트 (ISBN + 반품정보만 기록)
- * 각 도서의 상태(반품 OK / 접수 불가(파손))가 함께 기록됩니다.
+ * 권 단위 판정: 같은 도서라도 "반품 OK" 권수와 "접수 불가(파손)" 권수가
+ * 각각 별도의 행으로 기록됩니다. (예: OK 3권 1행 + 파손 2권 1행)
  * @param {Object} payload {orderNo, customer, returnDate, qrRaw, mode,
- *                          items:[{isbn,title,edition,qty,found,status}]}
- * @return {Object} {ok, count, unregistered, damaged}
+ *                          items:[{isbn,title,edition,found,qtyOk,qtyDamaged}]}
+ * @return {Object} {ok, count, unregistered, okQty, damagedQty}
  */
 function submitReturn(payload) {
   if (!payload || !payload.items || !payload.items.length) {
@@ -169,18 +170,28 @@ function submitReturn(payload) {
 
   var registeredRows = [];
   var unregisteredRows = [];
-  var damaged = 0;
+  var okQty = 0, damagedQty = 0;
   payload.items.forEach(function (it) {
-    var qty = Math.max(1, parseInt(it.qty, 10) || 1);
     var isbn = normalizeIsbn_(it.isbn);
-    var statusLabel = it.status === 'DAMAGED' ? '접수 불가(파손)' : '반품 OK';
-    if (it.status === 'DAMAGED') damaged++;
-    if (it.found) {
-      registeredRows.push([now, returnDate, orderNo, customer, isbn, String(it.title || ''), String(it.edition || ''), qty, statusLabel, modeLabel, qrRaw]);
-    } else {
-      unregisteredRows.push([now, returnDate, orderNo, customer, isbn, qty, statusLabel, modeLabel, qrRaw]);
-    }
+    // [상태 라벨, 권수] 쌍으로 펼쳐서 상태별로 한 행씩 기록
+    var parts = [
+      ['반품 OK', Math.max(0, parseInt(it.qtyOk, 10) || 0)],
+      ['접수 불가(파손)', Math.max(0, parseInt(it.qtyDamaged, 10) || 0)]
+    ];
+    parts.forEach(function (p) {
+      var statusLabel = p[0], qty = p[1];
+      if (qty < 1) return;
+      if (statusLabel === '반품 OK') okQty += qty; else damagedQty += qty;
+      if (it.found) {
+        registeredRows.push([now, returnDate, orderNo, customer, isbn, String(it.title || ''), String(it.edition || ''), qty, statusLabel, modeLabel, qrRaw]);
+      } else {
+        unregisteredRows.push([now, returnDate, orderNo, customer, isbn, qty, statusLabel, modeLabel, qrRaw]);
+      }
+    });
   });
+  if (!registeredRows.length && !unregisteredRows.length) {
+    throw new Error('기록할 권수가 없습니다.');
+  }
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
@@ -203,6 +214,7 @@ function submitReturn(payload) {
     ok: true,
     count: registeredRows.length + unregisteredRows.length,
     unregistered: unregisteredRows.length,
-    damaged: damaged
+    okQty: okQty,
+    damagedQty: damagedQty
   };
 }

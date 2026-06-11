@@ -127,7 +127,13 @@
     display: inline-block; background: #fee2e2; color: var(--red);
     font-size: .82rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; vertical-align: middle;
   }
-  /* 상태(반품 OK / 접수 불가) 토글 */
+  /* 상태(반품 OK / 접수 불가) 토글 — 반복 스캔 모드의 "현재 판정" 바 */
+  #judge-bar {
+    width: min(900px, 96vw); display: none; gap: 10px; align-items: center;
+    background: var(--card); border-radius: 14px; padding: 10px 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.05);
+  }
+  #judge-bar .jb-label { font-weight: 800; font-size: 1.05rem; }
   .status-toggle { display: flex; gap: 6px; flex: none; }
   .status-toggle button {
     border: 2px solid #e2e8f0; background: var(--card); border-radius: 10px;
@@ -135,13 +141,19 @@
   }
   .status-toggle button.on-ok { background: #dcfce7; border-color: var(--green); color: var(--green); }
   .status-toggle button.on-bad { background: #fee2e2; border-color: var(--red); color: var(--red); }
-  .qty-ctrl { display: flex; align-items: center; gap: 6px; }
+  /* 권 단위 수량 컨트롤 (OK/파손 각각) */
+  .qty-ctrl { display: flex; align-items: center; gap: 4px; border-radius: 12px; padding: 4px 8px; }
+  .qty-ctrl.ok { background: #f0fdf4; }
+  .qty-ctrl.bad { background: #fef2f2; }
+  .qty-ctrl .lab { font-size: .92rem; font-weight: 800; margin-right: 2px; white-space: nowrap; }
+  .qty-ctrl.ok .lab { color: var(--green); }
+  .qty-ctrl.bad .lab { color: var(--red); }
   .qty-ctrl button {
-    width: 52px; height: 52px; border-radius: 12px; border: none; background: #e2e8f0;
-    font-size: 1.6rem; font-weight: 800; cursor: pointer;
+    width: 46px; height: 46px; border-radius: 10px; border: none; background: #e2e8f0;
+    font-size: 1.4rem; font-weight: 800; cursor: pointer;
   }
   .qty-ctrl .qty {
-    min-width: 64px; text-align: center; font-size: 1.5rem; font-weight: 800;
+    min-width: 54px; text-align: center; font-size: 1.35rem; font-weight: 800;
     cursor: pointer; padding: 4px; border-radius: 8px;
   }
   .qty-ctrl .qty:active { background: #eff6ff; }
@@ -190,6 +202,13 @@
     font-size: 2.6rem; font-weight: 800; background: var(--bg);
     border-radius: 12px; padding: 12px 28px; min-width: 200px; text-align: center;
   }
+  .num-display.small { font-size: 1.9rem; min-width: 120px; padding: 8px 16px; }
+  .qty-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    width: 100%; border: 2px solid transparent; border-radius: 12px; padding: 8px 12px; cursor: pointer;
+  }
+  .qty-row.sel { border-color: var(--blue); background: #eff6ff; }
+  .qty-row .rl { font-size: 1.15rem; }
   #isbn-display { font-size: 1.9rem; min-width: 300px; letter-spacing: 2px; }
   .keypad { display: grid; grid-template-columns: repeat(3, 96px); gap: 10px; }
   .keypad button {
@@ -313,6 +332,14 @@
       <button class="btn secondary" onclick="openIsbnPad()">🔢 ISBN 직접 입력</button>
       <button class="btn secondary" onclick="openSearch()">🔍 도서명 검색</button>
     </div>
+    <div id="judge-bar">
+      <span class="jb-label">현재 판정:</span>
+      <div class="status-toggle">
+        <button id="jb-ok" class="on-ok" onclick="setJudgment('OK')">✓ 반품 OK</button>
+        <button id="jb-bad" onclick="setJudgment('DAMAGED')">✕ 접수 불가(파손)</button>
+      </div>
+      <span style="color:var(--muted); font-size:.95rem;">선택된 판정으로 스캔 권수가 누적됩니다</span>
+    </div>
     <div id="cart"><div id="cart-empty">아직 입력한 도서가 없습니다</div></div>
     <div id="books-footer">
       <button class="btn ghost" onclick="goMode()">← 이전</button>
@@ -350,12 +377,19 @@
   </div>
 </div>
 
-<!-- 권수 키패드 모달 -->
+<!-- 권수 키패드 모달 (반품 OK / 접수 불가 권수를 각각 입력) -->
 <div class="modal" id="qty-modal">
   <div class="modal-card">
     <h3>반품 권수 입력</h3>
     <div id="qty-book-title"></div>
-    <div id="qty-display" class="num-display">1</div>
+    <div class="qty-row sel" id="qty-row-ok" onclick="selectQtyField('ok')">
+      <span class="rl st-ok-text">✓ 반품 OK</span>
+      <div id="qty-ok-display" class="num-display small">1</div>
+    </div>
+    <div class="qty-row" id="qty-row-bad" onclick="selectQtyField('bad')">
+      <span class="rl st-bad-text">✕ 접수 불가(파손)</span>
+      <div id="qty-bad-display" class="num-display small">0</div>
+    </div>
     <div id="keypad" class="keypad">
       <button onclick="kp('1')">1</button><button onclick="kp('2')">2</button><button onclick="kp('3')">3</button>
       <button onclick="kp('4')">4</button><button onclick="kp('5')">5</button><button onclick="kp('6')">6</button>
@@ -410,11 +444,11 @@ var state = {
   screen: 'idle',
   orderNo: '', customer: '', returnDate: '', qrRaw: '',
   mode: '',                 // 'manual' | 'scan'
-  cart: []                  // [{isbn, title, edition, qty, found, status}] status: 'OK'|'DAMAGED'
+  cart: []                  // [{isbn, title, edition, found, qtyOk, qtyDamaged}] — 권 단위 판정
 };
 var bookCache = {};         // isbn -> {found,isbn,title,...}
 var pendingBook = null;     // 키패드 입력 대상
-var qtyValue = '1';
+var scanJudgment = 'OK';    // 반복 스캔 모드의 현재 판정 ('OK'|'DAMAGED')
 
 var SCREEN_STEP = { idle: 0, order: 1, mode: 2, books: 3, confirm: 4, done: 4 };
 
@@ -453,10 +487,19 @@ function goMode() { show('mode'); }
 function goBooks() {
   document.getElementById('mode-hint').textContent =
     state.mode === 'scan'
-      ? '반복 스캔 모드: 같은 도서를 스캔할 때마다 권수가 1씩 늘어납니다'
-      : '직접 입력 모드: 도서 입력 후 키패드로 권수를 입력합니다';
+      ? '반복 스캔 모드: 스캔할 때마다 아래 "현재 판정" 쪽 권수가 1씩 늘어납니다'
+      : '직접 입력 모드: 도서 입력 후 키패드로 반품 OK/접수 불가 권수를 각각 입력합니다';
+  document.getElementById('judge-bar').style.display = state.mode === 'scan' ? 'flex' : 'none';
+  setJudgment('OK');
   renderCart();
   show('books');
+}
+
+/** 반복 스캔 모드: 다음 스캔부터 적용될 판정 선택 */
+function setJudgment(j) {
+  scanJudgment = j;
+  document.getElementById('jb-ok').className = j === 'OK' ? 'on-ok' : '';
+  document.getElementById('jb-bad').className = j === 'DAMAGED' ? 'on-bad' : '';
 }
 
 function resetAll() {
@@ -577,12 +620,12 @@ function onBookResolved(book) {
     toast('도서목록에 없는 도서입니다 — 미등록반품으로 기록됩니다', true);
   }
   if (state.mode === 'scan') {
-    addToCart(book.isbn, title, edition, 1, true, book.found);
+    addCopies(book.isbn, title, edition, book.found, scanJudgment, 1);
     beep();
   } else {
     pendingBook = { isbn: book.isbn, title: title, edition: edition, found: book.found };
     var existing = findCartItem(book.isbn);
-    openQty(existing ? String(existing.qty) : '1');
+    openQty(existing ? String(existing.qtyOk) : '1', existing ? String(existing.qtyDamaged) : '0');
     beep();
   }
 }
@@ -592,19 +635,45 @@ function findCartItem(isbn) {
   return null;
 }
 
-/** accumulate=true면 기존 수량에 더하고, false면 수량을 교체 */
-function addToCart(isbn, title, edition, qty, accumulate, found) {
+function getOrCreateItem(isbn, title, edition, found) {
   var item = findCartItem(isbn);
-  if (item) item.qty = accumulate ? item.qty + qty : qty;
-  else { item = { isbn: isbn, title: title, edition: edition, qty: qty, found: !!found, status: 'OK' }; state.cart.push(item); }
-  renderCart(isbn);
-  toast('✓ ' + title + (edition ? ' (' + edition + ')' : '') + ' — ' + item.qty + '권');
+  if (!item) {
+    item = { isbn: isbn, title: title, edition: edition, found: !!found, qtyOk: 0, qtyDamaged: 0 };
+    state.cart.push(item);
+  }
+  return item;
 }
 
-function changeQty(isbn, delta) {
+/** 반복 스캔 모드: 판정(judgment) 쪽 권수에 n권 누적 */
+function addCopies(isbn, title, edition, found, judgment, n) {
+  var item = getOrCreateItem(isbn, title, edition, found);
+  if (judgment === 'DAMAGED') item.qtyDamaged += n;
+  else item.qtyOk += n;
+  renderCart(isbn);
+  toast((judgment === 'DAMAGED' ? '⚠ ' : '✓ ') + title +
+    ' — OK ' + item.qtyOk + '권 · 파손 ' + item.qtyDamaged + '권', judgment === 'DAMAGED');
+}
+
+/** 직접 입력 모드: OK/파손 권수를 한 번에 설정(교체) */
+function setQuantities(isbn, title, edition, found, qtyOk, qtyDamaged) {
+  var item = getOrCreateItem(isbn, title, edition, found);
+  item.qtyOk = qtyOk;
+  item.qtyDamaged = qtyDamaged;
+  renderCart(isbn);
+  toast('✓ ' + title + ' — OK ' + item.qtyOk + '권 · 파손 ' + item.qtyDamaged + '권');
+}
+
+/** field: 'ok'|'bad' — 합계가 0이 되면 도서를 목록에서 제거 */
+function changeQty(isbn, field, delta) {
   var item = findCartItem(isbn);
   if (!item) return;
-  item.qty = Math.max(1, item.qty + delta);
+  if (field === 'bad') item.qtyDamaged = Math.max(0, item.qtyDamaged + delta);
+  else item.qtyOk = Math.max(0, item.qtyOk + delta);
+  if (item.qtyOk + item.qtyDamaged === 0) {
+    removeItem(isbn);
+    toast('목록에서 제거되었습니다');
+    return;
+  }
   renderCart();
 }
 function removeItem(isbn) {
@@ -615,18 +684,17 @@ function editQty(isbn) {
   var item = findCartItem(isbn);
   if (!item) return;
   pendingBook = { isbn: item.isbn, title: item.title, edition: item.edition, found: item.found };
-  openQty(String(item.qty));
-}
-function setStatus(isbn, status) {
-  var item = findCartItem(isbn);
-  if (!item) return;
-  item.status = status;
-  if (status === 'DAMAGED') toast('⚠ 파손으로 접수 불가 처리되었습니다', true);
-  renderCart();
+  openQty(String(item.qtyOk), String(item.qtyDamaged));
 }
 
 function totalQty() {
-  return state.cart.reduce(function (s, it) { return s + it.qty; }, 0);
+  return state.cart.reduce(function (s, it) { return s + it.qtyOk + it.qtyDamaged; }, 0);
+}
+function totalOk() {
+  return state.cart.reduce(function (s, it) { return s + it.qtyOk; }, 0);
+}
+function totalDamaged() {
+  return state.cart.reduce(function (s, it) { return s + it.qtyDamaged; }, 0);
 }
 
 function renderCart(flashIsbn) {
@@ -640,21 +708,26 @@ function renderCart(flashIsbn) {
         (it.found ? '' : '<span class="badge-unreg">미등록</span> ') + esc(it.title) +
         (it.edition ? ' <span style="color:var(--muted);font-size:.95rem;font-weight:600;">' + esc(it.edition) + '</span>' : '') + '</div>' +
         '<div class="isbn">ISBN ' + it.isbn + (it.found ? '' : ' · 미등록반품 시트에 기록됩니다') + '</div></div>' +
-        '<div class="status-toggle">' +
-          '<button class="' + (it.status === 'OK' ? 'on-ok' : '') + '" onclick="setStatus(\'' + it.isbn + '\',\'OK\')">✓ 반품 OK</button>' +
-          '<button class="' + (it.status === 'DAMAGED' ? 'on-bad' : '') + '" onclick="setStatus(\'' + it.isbn + '\',\'DAMAGED\')">✕ 접수 불가</button>' +
+        '<div class="qty-ctrl ok">' +
+          '<span class="lab">✓ OK</span>' +
+          '<button onclick="changeQty(\'' + it.isbn + '\',\'ok\',-1)">−</button>' +
+          '<div class="qty" onclick="editQty(\'' + it.isbn + '\')">' + it.qtyOk + '</div>' +
+          '<button onclick="changeQty(\'' + it.isbn + '\',\'ok\',1)">＋</button>' +
         '</div>' +
-        '<div class="qty-ctrl">' +
-          '<button onclick="changeQty(\'' + it.isbn + '\',-1)">−</button>' +
-          '<div class="qty" onclick="editQty(\'' + it.isbn + '\')">' + it.qty + '권</div>' +
-          '<button onclick="changeQty(\'' + it.isbn + '\',1)">＋</button>' +
+        '<div class="qty-ctrl bad">' +
+          '<span class="lab">✕ 파손</span>' +
+          '<button onclick="changeQty(\'' + it.isbn + '\',\'bad\',-1)">−</button>' +
+          '<div class="qty" onclick="editQty(\'' + it.isbn + '\')">' + it.qtyDamaged + '</div>' +
+          '<button onclick="changeQty(\'' + it.isbn + '\',\'bad\',1)">＋</button>' +
         '</div>' +
         '<button class="del" onclick="removeItem(\'' + it.isbn + '\')">✕</button>' +
         '</div>';
     }).join('');
   }
   document.getElementById('cart-total').textContent =
-    state.cart.length ? '총 ' + state.cart.length + '종 ' + totalQty() + '권' : '';
+    state.cart.length
+      ? '총 ' + state.cart.length + '종 ' + totalQty() + '권 (OK ' + totalOk() + ' · 파손 ' + totalDamaged() + ')'
+      : '';
   document.getElementById('btn-to-confirm').disabled = !state.cart.length;
 }
 
@@ -662,19 +735,24 @@ function renderCart(flashIsbn) {
 function goConfirm() {
   if (!state.cart.length) return;
   var unregCount = state.cart.filter(function (it) { return !it.found; }).length;
-  var damagedCount = state.cart.filter(function (it) { return it.status === 'DAMAGED'; }).length;
-  var html = '<table><tr><th>제목</th><th>판정보</th><th>ISBN</th><th>상태</th><th style="text-align:right">권수</th></tr>' +
+  var damagedTotal = totalDamaged();
+  var html = '<table><tr><th>제목</th><th>판정보</th><th>ISBN</th>' +
+    '<th style="text-align:right"><span class="st-ok-text">✓ OK</span></th>' +
+    '<th style="text-align:right"><span class="st-bad-text">✕ 파손</span></th>' +
+    '<th style="text-align:right">계</th></tr>' +
     state.cart.map(function (it) {
-      var st = it.status === 'DAMAGED'
-        ? '<span class="st-bad-text">✕ 접수 불가(파손)</span>'
-        : '<span class="st-ok-text">✓ 반품 OK</span>';
       return '<tr><td>' + (it.found ? '' : '<span class="badge-unreg">미등록</span> ') + esc(it.title) +
-        '</td><td>' + esc(it.edition || '-') + '</td><td>' + it.isbn + '</td><td>' + st +
-        '</td><td class="num">' + it.qty + '</td></tr>';
+        '</td><td>' + esc(it.edition || '-') + '</td><td>' + it.isbn +
+        '</td><td class="num">' + (it.qtyOk || '-') +
+        '</td><td class="num" style="color:var(--red);">' + (it.qtyDamaged || '-') +
+        '</td><td class="num">' + (it.qtyOk + it.qtyDamaged) + '</td></tr>';
     }).join('') +
-    '<tr><td colspan="4" style="font-weight:800">합계</td><td class="num">' + totalQty() + '</td></tr></table>' +
-    (damagedCount
-      ? '<p style="margin-top:12px;color:var(--red);font-weight:700;">⚠ 파손 도서 ' + damagedCount + '종은 "접수 불가(파손)" 상태로 기록됩니다</p>'
+    '<tr><td colspan="3" style="font-weight:800">합계</td>' +
+    '<td class="num">' + totalOk() + '</td>' +
+    '<td class="num" style="color:var(--red);">' + damagedTotal + '</td>' +
+    '<td class="num">' + totalQty() + '</td></tr></table>' +
+    (damagedTotal
+      ? '<p style="margin-top:12px;color:var(--red);font-weight:700;">⚠ 파손 ' + damagedTotal + '권은 "접수 불가(파손)" 상태로 기록됩니다</p>'
       : '') +
     (unregCount
       ? '<p style="margin-top:8px;color:var(--red);font-weight:700;">⚠ 미등록 도서 ' + unregCount + '종은 "미등록반품" 시트에 따로 기록됩니다</p>'
@@ -691,9 +769,8 @@ function submit() {
       document.getElementById('done-msg').textContent =
         '주문번호 ' + state.orderNo + ' · ' + state.customer + ' · 반품일자 ' + state.returnDate;
       document.getElementById('done-count').textContent =
-        '총 ' + totalQty() + '권의 반품이 기록되었습니다' +
-        (res.damaged ? ' (접수 불가 ' + res.damaged + '종 포함)' : '') +
-        (res.unregistered ? ' (미등록 도서 ' + res.unregistered + '종은 미등록반품 시트에 기록)' : '');
+        '반품 OK ' + totalOk() + '권 · 접수 불가(파손) ' + totalDamaged() + '권이 기록되었습니다' +
+        (res.unregistered ? ' (미등록 도서는 미등록반품 시트에 기록)' : '');
       show('done');
       // 키오스크 자동 초기화
       setTimeout(function () { if (state.screen === 'done') resetAll(); }, 8000);
@@ -781,28 +858,45 @@ function closeCamera() {
   }
 }
 
-/* ───────────────────── 권수 키패드 ───────────────────── */
-function openQty(initial) {
-  qtyValue = initial || '1';
+/* ───────────────── 권수 키패드 (OK/파손 각각 입력) ───────────────── */
+var qtyOkValue = '1', qtyBadValue = '0', qtyField = 'ok';
+
+function openQty(initialOk, initialBad) {
+  qtyOkValue = initialOk || '1';
+  qtyBadValue = initialBad || '0';
   document.getElementById('qty-book-title').textContent =
     pendingBook ? pendingBook.title + (pendingBook.edition ? ' (' + pendingBook.edition + ')' : '') : '';
-  document.getElementById('qty-display').textContent = qtyValue;
+  selectQtyField('ok');
+  renderQtyDisplays();
   document.getElementById('qty-modal').classList.add('open');
 }
 function closeQty() {
   document.getElementById('qty-modal').classList.remove('open');
   pendingBook = null;
 }
+/** 키패드 입력이 적용될 칸 선택 ('ok'|'bad') */
+function selectQtyField(f) {
+  qtyField = f;
+  document.getElementById('qty-row-ok').classList.toggle('sel', f === 'ok');
+  document.getElementById('qty-row-bad').classList.toggle('sel', f === 'bad');
+}
+function renderQtyDisplays() {
+  document.getElementById('qty-ok-display').textContent = qtyOkValue || '0';
+  document.getElementById('qty-bad-display').textContent = qtyBadValue || '0';
+}
 function kp(k) {
-  if (k === 'C') qtyValue = '';
-  else if (k === '⌫') qtyValue = qtyValue.slice(0, -1);
-  else if (qtyValue.length < 4) qtyValue = (qtyValue === '0' ? '' : qtyValue) + k;
-  document.getElementById('qty-display').textContent = qtyValue || '0';
+  var v = qtyField === 'bad' ? qtyBadValue : qtyOkValue;
+  if (k === 'C') v = '';
+  else if (k === '⌫') v = v.slice(0, -1);
+  else if (v.length < 4) v = (v === '0' ? '' : v) + k;
+  if (qtyField === 'bad') qtyBadValue = v; else qtyOkValue = v;
+  renderQtyDisplays();
 }
 function confirmQty() {
-  var n = parseInt(qtyValue, 10);
-  if (!n || n < 1) { toast('1권 이상 입력해주세요', true); return; }
-  if (pendingBook) addToCart(pendingBook.isbn, pendingBook.title, pendingBook.edition, n, false, pendingBook.found);
+  var ok = parseInt(qtyOkValue, 10) || 0;
+  var bad = parseInt(qtyBadValue, 10) || 0;
+  if (ok + bad < 1) { toast('합계 1권 이상 입력해주세요', true); return; }
+  if (pendingBook) setQuantities(pendingBook.isbn, pendingBook.title, pendingBook.edition, pendingBook.found, ok, bad);
   closeQty();
 }
 
