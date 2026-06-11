@@ -370,6 +370,11 @@
   <div class="modal-card">
     <h3 id="camera-title">스캔</h3>
     <div id="qr-reader"></div>
+    <div id="camera-error" style="display:none; flex-direction:column; gap:14px; align-items:center;">
+      <div style="font-size:2.6rem;">🚫</div>
+      <p id="camera-error-msg" style="font-size:1.05rem; line-height:1.5; text-align:center;"></p>
+      <button class="btn" id="btn-open-newtab" onclick="openInNewTab()" style="display:none;">🗗 새 창에서 열기</button>
+    </div>
     <button class="btn secondary" onclick="closeCamera()">닫기</button>
   </div>
 </div>
@@ -765,7 +770,12 @@ var html5Qr = null, camTarget = '', lastCamText = '', lastCamTime = 0;
 function openCamera(target) {
   camTarget = target;
   document.getElementById('camera-title').textContent = 'ISBN 바코드를 비춰주세요';
+  hideCameraError();
   document.getElementById('camera-modal').classList.add('open');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showCameraError({ name: 'NotSupportedError' });
+    return;
+  }
   var formats = [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128];
   html5Qr = new Html5Qrcode('qr-reader', { formatsToSupport: formats });
   html5Qr.start(
@@ -774,9 +784,41 @@ function openCamera(target) {
     onCameraScan,
     function () { /* 프레임 단위 인식 실패는 무시 */ }
   ).catch(function (err) {
-    toast('카메라를 열 수 없습니다. ISBN 직접 입력이나 도서명 검색을 이용해주세요.', true);
-    closeCamera();
+    if (html5Qr) { try { html5Qr.clear(); } catch (e) { /* 무시 */ } html5Qr = null; }
+    showCameraError(err);
   });
+}
+
+/** 카메라 실패 원인별 안내 표시 */
+function showCameraError(err) {
+  var name = (err && err.name) || String(err || '');
+  var inIframe = (function () { try { return window.self !== window.top; } catch (e) { return true; } })();
+  var msg;
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    msg = '사용 가능한 카메라를 찾지 못했습니다. 카메라 연결을 확인하거나, ISBN 직접 입력·도서명 검색을 이용해주세요.';
+  } else if (name === 'NotReadableError' || name === 'AbortError') {
+    msg = '다른 프로그램이 카메라를 사용 중이라 열 수 없습니다. 해당 프로그램을 종료한 뒤 다시 시도해주세요.';
+  } else if (name === 'NotSupportedError') {
+    msg = '이 브라우저는 카메라 기능을 지원하지 않습니다. 최신 Chrome 사용을 권장합니다.';
+  } else if (inIframe) {
+    // Apps Script 웹앱이 구글 샌드박스 iframe 안에서 실행되면
+    // 브라우저에서 권한을 허용해도 카메라가 차단됩니다.
+    msg = '구글 내장 화면(iframe) 안에서는 보안 정책 때문에 카메라 권한을 허용해도 카메라가 차단됩니다. 아래 "새 창에서 열기"를 누르고, 새로 열린 창에서 키오스크를 사용해주세요.';
+  } else {
+    msg = '카메라 권한이 거부되었거나 차단되어 있습니다. 주소창의 자물쇠(🔒) → 사이트 설정에서 카메라를 "허용"으로 바꾸고 새로고침해주세요.';
+  }
+  document.getElementById('camera-error-msg').textContent = msg;
+  document.getElementById('btn-open-newtab').style.display = inIframe ? 'inline-block' : 'none';
+  document.getElementById('qr-reader').style.display = 'none';
+  document.getElementById('camera-error').style.display = 'flex';
+}
+function hideCameraError() {
+  document.getElementById('camera-error').style.display = 'none';
+  document.getElementById('qr-reader').style.display = 'block';
+}
+/** 현재 iframe 주소를 새 탭(최상위)으로 열면 카메라 제한이 풀립니다 */
+function openInNewTab() {
+  window.open(window.location.href, '_blank');
 }
 
 function onCameraScan(text) {
@@ -789,6 +831,7 @@ function onCameraScan(text) {
 
 function closeCamera() {
   document.getElementById('camera-modal').classList.remove('open');
+  hideCameraError();
   if (html5Qr) {
     var inst = html5Qr; html5Qr = null;
     inst.stop().then(function () { inst.clear(); }).catch(function () {});
