@@ -3,8 +3,8 @@
  *
  * 시트 구성
  *  - 도서목록   : ISBN | 제목 | 판정보(초판, 개정 2판 등) | 발간일 | 출판사   (도서 마스터, 관리자가 채움)
- *  - 반품기록   : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 판정보 | 권수 | 입력방식 | QR원문 | 입력자
- *  - 미등록반품 : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 권수 | 입력방식 | QR원문 | 입력자
+ *  - 반품기록   : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 판정보 | 권수 | 입력방식 | QR원문 | 부서 | 입력자
+ *  - 미등록반품 : 반품일시 | 연수과정 | 기수 | 개강일 | ISBN | 제목 | 권수 | 입력방식 | QR원문 | 부서 | 입력자
  *               (도서목록에 없는 ISBN 스캔분과 사용자가 직접 입력한 제목의 반품이 이 시트에 기록됩니다)
  */
 
@@ -43,8 +43,8 @@ function setupSheets() {
   var rets = ss.getSheetByName(SHEET_RETURNS);
   if (!rets) {
     rets = ss.insertSheet(SHEET_RETURNS);
-    rets.getRange(1, 1, 1, 11)
-      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '판정보', '권수', '입력방식', 'QR원문', '입력자']])
+    rets.getRange(1, 1, 1, 12)
+      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '판정보', '권수', '입력방식', 'QR원문', '부서', '입력자']])
       .setFontWeight('bold');
     rets.setFrozenRows(1);
     rets.getRange('E:E').setNumberFormat('@');
@@ -98,8 +98,8 @@ function ensureUnregisteredSheet_(ss) {
   var sheet = ss.getSheetByName(SHEET_UNREGISTERED);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_UNREGISTERED);
-    sheet.getRange(1, 1, 1, 10)
-      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '권수', '입력방식', 'QR원문', '입력자']])
+    sheet.getRange(1, 1, 1, 11)
+      .setValues([['반품일시', '연수과정', '기수', '개강일', 'ISBN', '제목', '권수', '입력방식', 'QR원문', '부서', '입력자']])
       .setFontWeight('bold');
     sheet.setFrozenRows(1);
     sheet.getRange('E:E').setNumberFormat('@');
@@ -227,6 +227,7 @@ function buildReceiptHtml_(payload) {
     '<div>연수과정: ' + e(payload.course) + '</div>' +
     '<div>기수: ' + e(payload.cohort || '-') + '</div>' +
     '<div>개강일: ' + e(payload.startDate || '-') + '</div>' +
+    '<div>부서: ' + e(payload.dept || '-') + '</div>' +
     '<div>출력일시: ' + now + '</div></div>' +
     '<table><tr><th>제목</th><th>판정보</th><th>ISBN</th><th>권수</th></tr>' +
     rows +
@@ -280,6 +281,7 @@ function submitReturn(payload) {
   var course = String(payload.course || '').trim();
   var cohort = String(payload.cohort || '').trim();
   var startDate = String(payload.startDate || '').trim();
+  var dept = String(payload.dept || '').trim();            // 부서 (진입화면에서 선택)
   var operator = String(payload.operator || '').trim();   // 입력자 이름 (선택값)
   if (!course) throw new Error('연수 과정 정보가 없습니다.');
 
@@ -293,9 +295,9 @@ function submitReturn(payload) {
     var qty = Math.max(1, parseInt(it.qty, 10) || 1);
     var isbn = normalizeIsbn_(it.isbn);
     if (it.found) {
-      registeredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), String(it.edition || ''), qty, modeLabel, qrRaw, operator]);
+      registeredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), String(it.edition || ''), qty, modeLabel, qrRaw, dept, operator]);
     } else {
-      unregisteredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), qty, modeLabel, qrRaw, operator]);
+      unregisteredRows.push([now, course, cohort, startDate, isbn, String(it.title || ''), qty, modeLabel, qrRaw, dept, operator]);
     }
   });
 
@@ -491,8 +493,8 @@ var EDIT_LIMIT_DAYS = 15;   // 입력일로부터 이 기간이 지나면 수정
 /** 시트별 수정 허용 항목 (그 외 열은 화면에서 수정 불가) */
 function editableFields_() {
   return {
-    '반품기록': ['연수과정', '기수', '개강일', '권수', '입력자'],
-    '미등록반품': ['연수과정', '기수', '개강일', '제목', '권수', '입력자']
+    '반품기록': ['연수과정', '기수', '개강일', '부서', '권수', '입력자'],
+    '미등록반품': ['연수과정', '기수', '개강일', '부서', '제목', '권수', '입력자']
   };
 }
 

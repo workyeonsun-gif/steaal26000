@@ -84,6 +84,7 @@
     box-shadow: 0 4px 14px rgba(0,0,0,.07); transition: transform .1s;
   }
   .mode-card:active { transform: scale(.97); }
+  .mode-card.sel { border-color: var(--blue); background: #eff6ff; }
   .mode-card .icon { font-size: 3.4rem; }
   .mode-card h3 { font-size: 1.5rem; margin: 12px 0 8px; }
   .mode-card p { color: var(--muted); font-size: 1.02rem; line-height: 1.45; }
@@ -300,16 +301,34 @@
     </div>
   </section>
 
-  <!-- 1. 연수과정 QR 스캔 -->
-  <section id="screen-course" class="screen">
-    <div class="scan-pulse">🔳</div>
-    <h2>연수 과정 QR코드를 스캔하세요</h2>
-    <p class="hint">USB 스캐너로 QR을 찍거나, 카메라 스캔을 이용하세요</p>
+  <!-- 1. 부서 선택 + 입력자 -->
+  <section id="screen-dept" class="screen">
+    <h2>부서를 선택하세요</h2>
+    <div class="mode-cards" id="dept-cards">
+      <div class="mode-card dept-card" onclick="pickDept(this, '연수운영부')"><div class="icon">🏫</div><h3>연수운영부</h3></div>
+      <div class="mode-card dept-card" onclick="pickDept(this, 'u-러닝부')"><div class="icon">💻</div><h3>u-러닝부</h3></div>
+      <div class="mode-card dept-card" onclick="pickDept(this, 'AI디지털연수부')"><div class="icon">🤖</div><h3>AI디지털연수부</h3></div>
+      <div class="mode-card dept-card" onclick="pickDept(this, '')"><div class="icon">📝</div><h3>기타부서</h3><p>부서명 직접 입력</p></div>
+    </div>
+    <div id="dept-etc-wrap" style="display:none; flex-direction:column; gap:6px; width:min(440px,92vw);">
+      <label for="in-dept-etc" style="font-size:1.02rem; color:var(--muted); font-weight:700;">부서명</label>
+      <input id="in-dept-etc" type="text" placeholder="부서명을 입력하세요"
+        style="font-size:1.25rem; padding:14px 16px; border:2px solid #cbd5e1; border-radius:12px;">
+    </div>
     <div style="display:flex; flex-direction:column; gap:6px; width:min(440px,92vw);">
       <label for="in-operator" style="font-size:1.02rem; color:var(--muted); font-weight:700;">입력자 이름 (선택)</label>
       <input id="in-operator" type="text" placeholder="반품 처리 담당자 이름"
         style="font-size:1.25rem; padding:14px 16px; border:2px solid #cbd5e1; border-radius:12px;">
     </div>
+    <button class="btn" onclick="confirmDept()">다음 →</button>
+    <button class="btn ghost" onclick="resetAll()">← 처음으로</button>
+  </section>
+
+  <!-- 2. 연수과정 QR 스캔 -->
+  <section id="screen-course" class="screen">
+    <div class="scan-pulse">🔳</div>
+    <h2>연수 과정 QR코드를 스캔하세요</h2>
+    <p class="hint">USB 스캐너로 QR을 찍거나, 카메라 스캔을 이용하세요</p>
     <button class="btn secondary" onclick="openCamera('course')">📷 카메라로 스캔</button>
     <button class="btn ghost" onclick="toggleManualCourse()">직접 입력하기</button>
     <div id="manual-course">
@@ -319,7 +338,10 @@
       <input id="in-startdate" type="date">
       <button class="btn" onclick="confirmManualCourse()">확인</button>
     </div>
-    <button class="btn ghost" onclick="resetAll()">← 처음으로</button>
+    <div style="display:flex; gap:10px;">
+      <button class="btn ghost" onclick="goDept()">← 이전</button>
+      <button class="btn ghost" onclick="resetAll()">처음으로</button>
+    </div>
   </section>
 
   <!-- 2. 권수 입력 방식 선택 -->
@@ -520,7 +542,7 @@
 /* ───────────────────────── 상태 ───────────────────────── */
 var state = {
   screen: 'idle',
-  course: '', cohort: '', startDate: '', operator: '', qrRaw: '',
+  course: '', cohort: '', startDate: '', dept: '', operator: '', qrRaw: '',
   mode: '',                 // 'manual' | 'scan'
   cart: []                  // [{isbn, title, edition, qty, found}] — found=false면 미등록반품 시트로 기록
 };
@@ -528,7 +550,7 @@ var bookCache = {};         // isbn -> {found,isbn,title,...}
 var pendingBook = null;     // 키패드 입력 대상
 var qtyValue = '1';
 
-var SCREEN_STEP = { idle: 0, course: 1, mode: 2, books: 3, confirm: 4, done: 4, history: 0 };
+var SCREEN_STEP = { idle: 0, dept: 1, course: 1, mode: 2, books: 3, confirm: 4, done: 4, history: 0 };
 
 /* ───────────────────────── 화면 전환 ───────────────────────── */
 function show(name) {
@@ -551,8 +573,31 @@ function show(name) {
   }
 }
 
-function startSession() { show('course'); }
+function startSession() { show('dept'); }
+function goDept() { show('dept'); }
 function goCourse() { show('course'); }
+
+/* ── 부서 선택 (진입 단계) ── */
+var deptChoice = null;   // {name, etc}
+
+function pickDept(el, name) {
+  document.querySelectorAll('.dept-card').forEach(function (c) { c.classList.remove('sel'); });
+  el.classList.add('sel');
+  deptChoice = { name: name, etc: !name };
+  document.getElementById('dept-etc-wrap').style.display = name ? 'none' : 'flex';
+  if (!name) document.getElementById('in-dept-etc').focus();
+  beep();
+}
+
+function confirmDept() {
+  if (!deptChoice) { toast('부서를 선택해주세요', true); return; }
+  var dept = deptChoice.etc ? document.getElementById('in-dept-etc').value.trim() : deptChoice.name;
+  if (!dept) { toast('부서명을 입력해주세요', true); return; }
+  state.dept = dept;
+  state.operator = document.getElementById('in-operator').value.trim();   // 선택값
+  beep();
+  show('course');
+}
 function goMode() { show('mode'); }
 function goBooks() {
   document.getElementById('mode-hint').textContent =
@@ -572,7 +617,11 @@ function resetAll() {
   closeEmail();
   closeLockAlert();
   verifyCtx = null;
-  state.course = ''; state.cohort = ''; state.startDate = ''; state.operator = ''; state.qrRaw = ''; state.mode = ''; state.cart = [];
+  state.course = ''; state.cohort = ''; state.startDate = ''; state.dept = ''; state.operator = ''; state.qrRaw = ''; state.mode = ''; state.cart = [];
+  deptChoice = null;
+  document.querySelectorAll('.dept-card').forEach(function (c) { c.classList.remove('sel'); });
+  document.getElementById('dept-etc-wrap').style.display = 'none';
+  document.getElementById('in-dept-etc').value = '';
   document.getElementById('in-course').value = '';
   document.getElementById('in-cohort').value = '';
   document.getElementById('in-startdate').value = '';
@@ -596,7 +645,6 @@ function confirmManualCourse() {
   if (!g) { toast('기수를 입력해주세요', true); return; }
   if (!d) { toast('개강일을 입력해주세요', true); return; }
   state.course = c; state.cohort = g; state.startDate = d;
-  state.operator = document.getElementById('in-operator').value.trim();   // 선택값
   beep();
   show('mode');
 }
@@ -630,7 +678,6 @@ function applyCourse(p) {
   state.qrRaw = p.raw;
   if (p.cohort && p.startDate) {
     state.course = p.course; state.cohort = p.cohort; state.startDate = p.startDate;
-    state.operator = document.getElementById('in-operator').value.trim();   // 선택값
     beep();
     toast('✓ ' + p.course + ' ' + p.cohort + ' · ' + p.startDate);
     show('mode');
@@ -791,7 +838,7 @@ function goConfirm() {
 function buildPayload() {
   return {
     course: state.course, cohort: state.cohort, startDate: state.startDate,
-    operator: state.operator, qrRaw: state.qrRaw, mode: state.mode,
+    dept: state.dept, operator: state.operator, qrRaw: state.qrRaw, mode: state.mode,
     items: state.cart.map(function (it) {
       // 직접 입력 제목 항목의 내부 키('C1' 등)는 시트에 ISBN으로 남기지 않음
       return { isbn: isCustomKey(it.isbn) ? '' : it.isbn, title: it.title, edition: it.edition, qty: it.qty, found: it.found };
@@ -893,7 +940,7 @@ function dispatchScan(text) {
   if (openModal && openModal.id !== 'camera-modal') return;
   if (state.screen === 'course') handleCourseQr(text);
   else if (state.screen === 'books') handleIsbnScan(text);
-  else if (state.screen === 'idle') { show('course'); handleCourseQr(text); }
+  // 대기/부서 선택 화면에서는 부서·입력자 확정 전이므로 스캔을 받지 않음
 }
 
 /* ───────────────────── 카메라 스캔 ───────────────────── */
