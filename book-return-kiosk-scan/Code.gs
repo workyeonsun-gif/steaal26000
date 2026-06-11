@@ -686,3 +686,52 @@ function saveRecordEdits(edits) {
   }
   return { updated: updated, blocked: blocked };
 }
+
+/* ─────────── 키오스크 조회 화면: 선택한 행 PDF 다운로드/이메일 ─────────── */
+
+/** 조회 화면에서 선택한 행 참조를 시트별 표시값 행으로 변환 */
+function rowsByRef_(refs) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var out = {};
+  out[SHEET_RETURNS] = [];
+  out[SHEET_UNREGISTERED] = [];
+  (refs || []).forEach(function (ref) {
+    var name = String(ref.sheet || '');
+    if (!(name in out)) return;
+    var sheet = ss.getSheetByName(name);
+    if (!sheet) return;
+    var row = parseInt(ref.row, 10);
+    if (!row || row < 2 || row > lastDataRow_(sheet)) return;
+    out[name].push(sheet.getRange(row, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]);
+  });
+  return out;
+}
+
+function buildHistoryPdf_(refs) {
+  var grouped = rowsByRef_(refs);
+  var rets = grouped[SHEET_RETURNS], unreg = grouped[SHEET_UNREGISTERED];
+  if (!rets.length && !unreg.length) throw new Error('PDF로 만들 내역이 없습니다. 행을 다시 선택해주세요.');
+  var pdf = Utilities.newBlob(buildSelectedPdfHtml_(rets, unreg), MimeType.HTML, 'r.html').getAs(MimeType.PDF);
+  pdf.setName('반품내역_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') + '.pdf');
+  return pdf;
+}
+
+/** 조회 화면: 선택한 행 PDF를 base64로 반환 (다운로드용) */
+function getHistoryPdf(refs) {
+  var pdf = buildHistoryPdf_(refs);
+  return { name: pdf.getName(), base64: Utilities.base64Encode(pdf.getBytes()) };
+}
+
+/** 조회 화면: 선택한 행 PDF를 이메일로 전송 */
+function emailHistoryPdf(refs, email) {
+  email = String(email || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('올바른 이메일 주소가 아닙니다.');
+  var pdf = buildHistoryPdf_(refs);
+  MailApp.sendEmail({
+    to: email,
+    subject: '[도서 반품] 반품 내역 — ' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+    body: '선택한 반품 내역을 PDF로 첨부합니다.',
+    attachments: [pdf]
+  });
+  return { ok: true };
+}

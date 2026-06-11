@@ -232,6 +232,7 @@
   .hist-rec.locked { background: #f8fafc; cursor: pointer; }
   .hist-head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-size: .92rem; margin-bottom: 8px; }
   .hist-head .sh { font-weight: 800; color: var(--blue); }
+  .hist-cb input { width: 24px; height: 24px; accent-color: var(--blue); cursor: pointer; }
   .hist-head .lk { color: var(--red); font-weight: 800; margin-left: auto; }
   .hist-head .md { color: #d97706; font-weight: 700; }
   .hist-fields { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -418,8 +419,10 @@
     <p class="hist-notice">ℹ️ 날짜를 지정하지 않고 검색하면 <b>검색일 기준 최근 30일 이내</b> 기록만 조회됩니다. 수정은 <b>입력일로부터 15일 이내</b>이고 <b>반품 처리가 완료되지 않은</b> 기록만 가능합니다.</p>
     <div id="hist-info" style="color:var(--muted); font-size:.95rem; width:min(940px,96vw);"></div>
     <div id="hist-list"><div class="hist-empty">조건을 입력하고 조회를 눌러주세요 (모두 비우면 최근 30일 전체)</div></div>
-    <div style="display:flex; gap:12px; align-items:center;">
+    <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap; justify-content:center;">
       <button class="btn ghost" onclick="resetAll()">← 처음으로</button>
+      <button class="btn secondary" id="hist-pdf" onclick="histPdf()" disabled>📄 선택 PDF</button>
+      <button class="btn secondary" id="hist-email" onclick="openHistEmail()" disabled>📧 선택 이메일</button>
       <button class="btn green" id="hist-save" onclick="histSave()" disabled>💾 변경사항 저장</button>
     </div>
   </section>
@@ -851,18 +854,7 @@ function downloadPdf() {
   if (!state.cart.length) { toast('PDF로 만들 내역이 없습니다', true); return; }
   showLoading(true);
   google.script.run
-    .withSuccessHandler(function (res) {
-      showLoading(false);
-      var bin = atob(res.base64);
-      var arr = new Uint8Array(bin.length);
-      for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-      var url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
-      var a = document.createElement('a');
-      a.href = url; a.download = res.name;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
-      toast('PDF 다운로드를 시작했습니다');
-    })
+    .withSuccessHandler(triggerPdfDownload)
     .withFailureHandler(function (err) {
       showLoading(false);
       toast('PDF 생성 실패: ' + err.message, true);
@@ -870,8 +862,25 @@ function downloadPdf() {
     .getReceiptPdf(buildPayload());
 }
 
+var emailMode = 'receipt';   // 'receipt'(확인 화면) | 'history'(조회 화면 선택분)
+
+/** base64 PDF 응답을 브라우저 다운로드로 연결 */
+function triggerPdfDownload(res) {
+  showLoading(false);
+  var bin = atob(res.base64);
+  var arr = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  var url = URL.createObjectURL(new Blob([arr], { type: 'application/pdf' }));
+  var a = document.createElement('a');
+  a.href = url; a.download = res.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  toast('PDF 다운로드를 시작했습니다');
+}
+
 function openEmail() {
   if (!state.cart.length) { toast('보낼 내역이 없습니다', true); return; }
+  emailMode = 'receipt';
   document.getElementById('email-input').value = '';
   document.getElementById('email-modal').classList.add('open');
   document.getElementById('email-input').focus();
@@ -883,7 +892,7 @@ function sendEmailReceipt() {
   var email = document.getElementById('email-input').value.trim();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('올바른 이메일 주소를 입력해주세요', true); return; }
   showLoading(true);
-  google.script.run
+  var run = google.script.run
     .withSuccessHandler(function () {
       showLoading(false);
       closeEmail();
@@ -892,8 +901,9 @@ function sendEmailReceipt() {
     .withFailureHandler(function (err) {
       showLoading(false);
       toast('전송 실패: ' + err.message, true);
-    })
-    .emailReceipt(buildPayload(), email);
+    });
+  if (emailMode === 'history') run.emailHistoryPdf(histSelectedRefs(), email);
+  else run.emailReceipt(buildPayload(), email);
 }
 
 function submit() {
@@ -1493,6 +1503,8 @@ function goHistory() {
     '<div class="hist-empty">조건을 입력하고 조회를 눌러주세요 (모두 비우면 최근 30일 전체)</div>';
   document.getElementById('hist-info').textContent = '';
   document.getElementById('hist-save').disabled = true;
+  document.getElementById('hist-pdf').disabled = true;
+  document.getElementById('hist-email').disabled = true;
   show('history');
 }
 
@@ -1543,7 +1555,9 @@ function renderHistory(res) {
     }).join('');
     return '<div class="hist-rec' + (r.editable ? '' : ' locked') + '"' +
       (r.editable ? '' : ' onclick="showLockAlert()"') + '>' +
-      '<div class="hist-head"><span class="sh">[' + esc(r.sheet) + ']</span>' +
+      '<div class="hist-head">' +
+      '<label class="hist-cb" onclick="event.stopPropagation()"><input type="checkbox" class="hist-pick" data-ri="' + ri + '"></label>' +
+      '<span class="sh">[' + esc(r.sheet) + ']</span>' +
       '<span>입력 ' + esc(r.ts) + '</span><span>' + esc(r.summary) + '</span>' +
       (r.modified ? '<span class="md">✏️ ' + esc(r.modified) + (r.modifiedAt ? ' (' + esc(r.modifiedAt) + ')' : '') + '</span>' : '') +
       (r.editable ? '' : '<span class="lk">🔒 ' + esc(r.lockReason || '수정 불가') + '</span>') +
@@ -1551,6 +1565,8 @@ function renderHistory(res) {
   }).join('');
   document.getElementById('hist-save').disabled =
     !res.records.some(function (r) { return r.editable; });
+  document.getElementById('hist-pdf').disabled = !res.records.length;
+  document.getElementById('hist-email').disabled = !res.records.length;
 }
 
 function histMark(el) {
@@ -1585,6 +1601,38 @@ function histSave() {
       toast('저장 실패: ' + err.message, true);
     })
     .saveRecordEdits(edits);
+}
+
+/** 조회 화면에서 체크된 행 참조 목록 */
+function histSelectedRefs() {
+  var refs = [];
+  document.querySelectorAll('#hist-list .hist-pick:checked').forEach(function (el) {
+    var r = histData && histData.records[Number(el.dataset.ri)];
+    if (r) refs.push({ sheet: r.sheet, row: r.row });
+  });
+  return refs;
+}
+
+function histPdf() {
+  var refs = histSelectedRefs();
+  if (!refs.length) { toast('PDF로 만들 내역을 먼저 체크해주세요', true); return; }
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(triggerPdfDownload)
+    .withFailureHandler(function (err) {
+      showLoading(false);
+      toast('PDF 생성 실패: ' + err.message, true);
+    })
+    .getHistoryPdf(refs);
+}
+
+function openHistEmail() {
+  var refs = histSelectedRefs();
+  if (!refs.length) { toast('이메일로 보낼 내역을 먼저 체크해주세요', true); return; }
+  emailMode = 'history';
+  document.getElementById('email-input').value = '';
+  document.getElementById('email-modal').classList.add('open');
+  document.getElementById('email-input').focus();
 }
 
 function showLockAlert() { document.getElementById('lock-modal').classList.add('open'); }
