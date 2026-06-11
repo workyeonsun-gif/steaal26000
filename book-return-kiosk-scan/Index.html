@@ -233,6 +233,11 @@
   .hist-head { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-size: .92rem; margin-bottom: 8px; }
   .hist-head .sh { font-weight: 800; color: var(--blue); }
   .hist-cb input { width: 24px; height: 24px; accent-color: var(--blue); cursor: pointer; }
+  .hist-del {
+    margin-left: auto; border: 2px solid #fecaca; background: #fef2f2; color: var(--red);
+    border-radius: 10px; padding: 7px 12px; font-weight: 800; font-size: .92rem; cursor: pointer;
+  }
+  .hist-head .lk { margin-left: 0; }
   .hist-head .lk { color: var(--red); font-weight: 800; margin-left: auto; }
   .hist-head .md { color: #d97706; font-weight: 700; }
   .hist-fields { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -526,6 +531,20 @@
   </div>
 </div>
 
+<!-- 삭제 확인 모달 -->
+<div class="modal" id="del-modal">
+  <div class="modal-card">
+    <div style="font-size:3rem;">🗑</div>
+    <h3>이 반품 내역을 삭제할까요?</h3>
+    <p id="del-summary" style="color:var(--muted); text-align:center; max-width:100%;"></p>
+    <p style="color:var(--red); font-weight:700; text-align:center;">삭제는 되돌릴 수 없으며,<br>삭제 사실과 내용이 수정이력 시트에 기록됩니다.</p>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; justify-content:center;">
+      <button class="btn secondary" onclick="closeDelete()">취소</button>
+      <button class="btn danger" onclick="confirmDelete()">🗑 삭제</button>
+    </div>
+  </div>
+</div>
+
 <!-- 수정 불가 알림 모달 -->
 <div class="modal" id="lock-modal">
   <div class="modal-card">
@@ -619,6 +638,7 @@ function resetAll() {
   closeVerify();
   closeEmail();
   closeLockAlert();
+  closeDelete();
   verifyCtx = null;
   state.course = ''; state.cohort = ''; state.startDate = ''; state.dept = ''; state.operator = ''; state.qrRaw = ''; state.mode = ''; state.cart = [];
   deptChoice = null;
@@ -1560,6 +1580,7 @@ function renderHistory(res) {
       '<span class="sh">[' + esc(r.sheet) + ']</span>' +
       '<span>입력 ' + esc(r.ts) + '</span><span>' + esc(r.summary) + '</span>' +
       (r.modified ? '<span class="md">✏️ ' + esc(r.modified) + (r.modifiedAt ? ' (' + esc(r.modifiedAt) + ')' : '') + '</span>' : '') +
+      (r.done ? '' : '<button class="hist-del" onclick="event.stopPropagation(); askDelete(' + ri + ')">🗑 삭제</button>') +
       (r.editable ? '' : '<span class="lk">🔒 ' + esc(r.lockReason || '수정 불가') + '</span>') +
       '</div><div class="hist-fields">' + fields + '</div></div>';
   }).join('');
@@ -1601,6 +1622,45 @@ function histSave() {
       toast('저장 실패: ' + err.message, true);
     })
     .saveRecordEdits(edits);
+}
+
+/* ── 미확정 내역 삭제 ── */
+var delTarget = null;
+
+function askDelete(ri) {
+  var r = histData && histData.records[ri];
+  if (!r) return;
+  if (r.done) { showLockAlert(); return; }   // 반품처리완료(확정) 건은 삭제 불가
+  delTarget = r;
+  document.getElementById('del-summary').textContent =
+    '[' + r.sheet + '] 입력 ' + r.ts + ' · ' + r.summary;
+  document.getElementById('del-modal').classList.add('open');
+}
+function closeDelete() {
+  document.getElementById('del-modal').classList.remove('open');
+  delTarget = null;
+}
+function confirmDelete() {
+  var t = delTarget;
+  closeDelete();
+  if (!t) return;
+  showLoading(true);
+  google.script.run
+    .withSuccessHandler(function (res) {
+      showLoading(false);
+      if (res.ok) {
+        toast('🗑 삭제되었습니다 (수정이력에 기록됨)');
+      } else {
+        toast(res.reason || '삭제할 수 없습니다', true);
+        if (res.reason && res.reason.indexOf('완료') !== -1) showLockAlert();
+      }
+      runHistory();   // 행 번호가 바뀌므로 반드시 다시 조회
+    })
+    .withFailureHandler(function (err) {
+      showLoading(false);
+      toast('삭제 실패: ' + err.message, true);
+    })
+    .deleteRecord({ sheet: t.sheet, row: t.row, ts: t.ts });
 }
 
 /** 조회 화면에서 체크된 행 참조 목록 */

@@ -586,6 +586,7 @@ function searchRecords(criteria) {
         summary: (titleIdx > -1 ? disp[i][titleIdx] : '') +
           (isbnIdx > -1 && disp[i][isbnIdx] ? ' · ISBN ' + disp[i][isbnIdx] : ''),
         editable: within && !done,
+        done: done,
         lockReason: done ? '반품 처리 완료' : (!within ? '입력일로부터 ' + EDIT_LIMIT_DAYS + '일 경과' : ''),
         modified: modIdx > -1 ? disp[i][modIdx] : '',
         modifiedAt: modAtIdx > -1 ? disp[i][modAtIdx] : '',
@@ -734,4 +735,57 @@ function emailHistoryPdf(refs, email) {
     attachments: [pdf]
   });
   return { ok: true };
+}
+
+
+/* ─────────── 키오스크 조회 화면: 미확정 내역 삭제 ─────────── */
+
+/**
+ * 반품처리완료(확정)되지 않은 내역 한 건을 삭제합니다.
+ * 삭제 전 행 전체 내용을 수정이력 시트에 스냅숏으로 남깁니다.
+ * @param {Object} ref {sheet, row, ts}
+ * @return {Object} {ok, reason}
+ */
+function deleteRecord(ref) {
+  if (!ref || !ref.sheet || !ref.row) throw new Error('삭제 대상이 올바르지 않습니다.');
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    if ([SHEET_RETURNS, SHEET_UNREGISTERED].indexOf(String(ref.sheet)) === -1) {
+      throw new Error('잘못된 시트입니다.');
+    }
+    var sheet = ss.getSheetByName(String(ref.sheet));
+    if (!sheet) throw new Error('시트를 찾을 수 없습니다.');
+    var row = parseInt(ref.row, 10);
+    if (!row || row < 2 || row > lastDataRow_(sheet)) {
+      return { ok: false, reason: '행을 찾을 수 없습니다. 다시 조회한 뒤 시도해주세요.' };
+    }
+    var lastCol = sheet.getLastColumn();
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    var ts = sheet.getRange(row, 1).getValue();
+    // 조회 후 시트가 정렬/변경되어 행이 어긋났으면 엉뚱한 행 삭제를 차단
+    if (!(ts instanceof Date) ||
+        (ref.ts && Utilities.formatDate(ts, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') !== String(ref.ts))) {
+      return { ok: false, reason: '시트 내용이 변경되어 삭제하지 않았습니다. 다시 조회한 뒤 시도해주세요.' };
+    }
+    // 반품처리완료(확정)된 내역은 삭제 불가
+    var doneIdx = headers.indexOf(COL_DONE);
+    if (doneIdx > -1 && sheet.getRange(row, doneIdx + 1).getValue() === true) {
+      return { ok: false, reason: '반품 처리가 완료된 내역은 삭제할 수 없습니다.' };
+    }
+    var user = '';
+    try { user = Session.getActiveUser().getEmail() || ''; } catch (e) { /* 권한에 따라 빈 값 */ }
+    // 삭제 전 행 전체 내용을 수정이력에 보존 (복구·추적용)
+    var rowVals = sheet.getRange(row, 1, 1, lastCol).getDisplayValues()[0];
+    var snapshot = headers.map(function (h, i) {
+      return rowVals[i] !== '' ? h + '=' + rowVals[i] : '';
+    }).filter(Boolean).join(' | ');
+    ensureAuditSheet_(ss).appendRow([new Date(), sheet.getName(), row, '행 삭제', snapshot, '(삭제됨)', user]);
+    sheet.deleteRow(row);
+    SpreadsheetApp.flush();
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
