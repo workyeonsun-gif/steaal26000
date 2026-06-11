@@ -953,9 +953,21 @@ function hideCameraError() {
 
 /* ── 사진 찍어 인식 (iframe에서도 동작하는 대체 수단) ── */
 var photoScanner = null;
+// 1차 엔진: 브라우저 내장 BarcodeDetector (OS 네이티브 — iOS 사파리 17+/안드로이드 크롬, 인식률이 가장 높음)
+var barcodeDetector = null;
+try {
+  if ('BarcodeDetector' in window) {
+    barcodeDetector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'qr_code'] });
+  }
+} catch (e) { barcodeDetector = null; }
 
 function takePhoto() {
   document.getElementById('photo-input').click();
+}
+
+function setPhotoStatus(msg) {
+  var el = document.getElementById('photo-status');
+  if (el) el.textContent = msg || '';
 }
 
 function onPhotoPicked(e) {
@@ -965,17 +977,147 @@ function onPhotoPicked(e) {
   showLoading(true);
   setPhotoStatus('🖼 사진 변환 중…');
   // 아이폰 HEIC/초고해상도 사진은 그대로는 해독에 실패하므로
-  // 캔버스로 JPEG 변환·축소한 여러 버전을 만들어 차례로 시도합니다.
-  buildPhotoCandidates(file, function (candidates) {
-    if (!candidates || !candidates.length) candidates = [file];   // 변환 실패 시 원본으로 시도
-    tryScanCandidates(candidates, 0);
+  // 캔버스로 변환·보정한 여러 버전을 만들어 두 엔진으로 차례로 시도합니다.
+  buildPhotoCandidates(file, function (canvases) {
+    if (!canvases || !canvases.length) { scanLegacyFile(file); return; }
+    if (barcodeDetector) detectSeq(canvases, 0);
+    else legacySeq(canvases, 0);
   });
 }
 
+function onPhotoDecoded(text) {
+  showLoading(false);
+  setPhotoStatus('');
+  startVerifyFromScan(text, 'photo');   // 사진 인식 결과도 확인창을 거쳐 적용
+}
+
+/** BarcodeDetector가 여러 코드를 찾으면 ISBN 형식(978/979)을 우선 선택 (부가기호 바코드 회피) */
+function pickDetected(codes) {
+  for (var i = 0; i < codes.length; i++) {
+    var v = String(codes[i].rawValue || '');
+    if (camTarget !== 'course' && isValidIsbn(normalizeIsbn(v))) return v;
+  }
+  return String(codes[0].rawValue || '');
+}
+
+/** 1차: BarcodeDetector로 후보들을 순서대로 시도 */
+function detectSeq(canvases, idx) {
+  if (idx >= canvases.length) { legacySeq(canvases, 0); return; }   // 실패 시 2차 엔진으로 전환
+  setPhotoStatus('🔍 인식 시도 중… 1차 엔진 (' + (idx + 1) + '/' + canvases.length + ')');
+  barcodeDetector.detect(canvases[idx]).then(function (codes) {
+    if (codes && codes.length && codes[0].rawValue) onPhotoDecoded(pickDetected(codes));
+    else detectSeq(canvases, idx + 1);
+  }).catch(function () { detectSeq(canvases, idx + 1); });
+}
+
+/** 2차: html5-qrcode로 후보들을 순서대로 시도 */
+function legacySeq(canvases, idx) {
+  if (idx >= canvases.length) {
+    // 바코드 인식이 모두 실패하면 3차: 인쇄된 ISBN 숫자(OCR) 인식으로 전환
+    if (camTarget !== 'course') ocrFallback(canvases);
+    else photoFail();
+    return;
+  }
+  setPhotoStatus('🔍 인식 시도 중… 2차 엔진 (' + (idx + 1) + '/' + canvases.length + ')');
+  canvases[idx].toBlob(function (blob) {
+    if (!blob) { legacySeq(canvases, idx + 1); return; }
+    scanWithHtml5Qr(new File([blob], 'scan' + idx + '.jpg', { type: 'image/jpeg' }),
+      onPhotoDecoded,
+      function () { legacySeq(canvases, idx + 1); });
+  }, 'image/jpeg', 0.92);
+}
+
+function scanWithHtml5Qr(file, onOk, onFail) {
+  try {
+    if (!photoScanner) photoScanner = new Html5Qrcode('photo-reader');
+    var p = photoScanner.scanFileV2
+      ? photoScanner.scanFileV2(file, false).then(function (r) { return r.decodedText; })
+      : photoScanner.scanFile(file, false);
+    p.then(onOk).catch(onFail);
+  } catch (err) {
+    showLoading(false);
+    setPhotoStatus('');
+    toast('사진 인식 실패: ' + err, true);
+  }
+}
+
+/** 캔버스 변환 자체가 실패한 경우 원본 파일로 마지막 시도 */
+function scanLegacyFile(file) {
+  setPhotoStatus('🔍 원본으로 인식 시도 중…');
+  scanWithHtml5Qr(file, onPhotoDecoded, function () {
+    if (camTarget !== 'course') {
+      setPhotoStatus('🔢 3차: 숫자(OCR) 인식 준비 중…');
+      loadTesseract().then(function () {
+        ocrRecognize(file, onPhotoDecoded, photoFail);
+      }).catch(photoFail);
+    } else {
+      photoFail();
+    }
+  });
+}
+
+function photoFail() {
+  showLoading(false);
+  setPhotoStatus('❌ 바코드·숫자 인식 모두 실패');
+  toast('사진에서 바코드와 숫자를 모두 인식하지 못했습니다. 바코드와 ISBN 숫자가 크고 선명하게 나오도록 가까이서 다시 찍어주세요.', true);
+}
+
+/* ── 3차: 인쇄된 ISBN 숫자(OCR) 인식 ── */
+var tesseractPromise = null;
+
+/** OCR 라이브러리는 무겁기 때문에 처음 필요할 때만 로드합니다 */
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve();
+  if (!tesseractPromise) {
+    tesseractPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+      s.onload = resolve;
+      s.onerror = function () { reject(new Error('OCR 라이브러리 로드 실패')); };
+      document.head.appendChild(s);
+    });
+  }
+  return tesseractPromise;
+}
+
+/** OCR 텍스트에서 978/979로 시작하는 유효한 13자리 ISBN만 추출 (흔한 오인식 문자 보정 포함) */
+function extractIsbnFromText(text) {
+  var t = String(text || '').replace(/[OoQ]/g, '0').replace(/[Il|]/g, '1').replace(/[Ss]/g, '5').replace(/[B]/g, '8');
+  var matches = t.match(/97[89][0-9\-\s.]{10,24}/g) || [];
+  for (var i = 0; i < matches.length; i++) {
+    var d = matches[i].replace(/[^0-9]/g, '').slice(0, 13);
+    if (isValidIsbn(d)) return d;
+  }
+  return '';
+}
+
+function ocrRecognize(src, onOk, onFail) {
+  Tesseract.recognize(src, 'eng').then(function (res) {
+    var isbn = extractIsbnFromText(res && res.data ? res.data.text : '');
+    if (isbn) onOk(isbn);
+    else onFail();
+  }).catch(onFail);
+}
+
+/** 대비 강화본부터 차례로 OCR 시도 */
+function ocrFallback(canvases) {
+  setPhotoStatus('🔢 3차: 숫자(OCR) 인식 준비 중…');
+  loadTesseract().then(function () {
+    ocrSeq(canvases, [1, 3, 0, 2], 0);   // 대비 강화 중앙 → 대비 강화 전체 → 원본 순
+  }).catch(photoFail);
+}
+
+function ocrSeq(canvases, order, k) {
+  if (k >= order.length) { photoFail(); return; }
+  var c = canvases[order[k]];
+  if (!c) { ocrSeq(canvases, order, k + 1); return; }
+  setPhotoStatus('🔢 3차: 숫자(OCR) 인식 중… (' + (k + 1) + '/' + order.length + ')');
+  ocrRecognize(c, onPhotoDecoded, function () { ocrSeq(canvases, order, k + 1); });
+}
+
 /**
- * 사진을 캔버스로 변환해 인식 후보를 생성합니다.
- * 어두운 라벨 사진을 위한 흑백·대비강화 버전과,
- * 바코드를 가운데 두고 찍는 촬영 습관에 맞춘 중앙 60%/40% 확대 버전을 포함합니다.
+ * 사진을 캔버스로 변환해 인식 후보 8종을 생성합니다.
+ * (중앙 60%/40% 확대, 흑백·대비 강화, 1000/1600/2400px 축소)
  */
 function buildPhotoCandidates(file, cb) {
   var url = URL.createObjectURL(file);
@@ -1024,59 +1166,19 @@ function buildPhotoCandidates(file, cb) {
       enhance(c60),              // 중앙 60% + 대비 강화 (어두운 라벨 사진)
       full,                      // 전체 1600px
       enhance(full),             // 전체 + 대비 강화
+      centerCrop(0.6, 2400),     // 중앙 60% 고해상도
       centerCrop(0.4, 1600),     // 중앙 40% (바코드가 작게 찍힌 경우)
       makeCanvas(0, 0, img.width, img.height, 2400),
       makeCanvas(0, 0, img.width, img.height, 1000)
     ];
-    var files = [], pending = canvases.length;
-    canvases.forEach(function (c, idx) {
-      c.toBlob(function (blob) {
-        files[idx] = blob ? new File([blob], 'scan' + idx + '.jpg', { type: 'image/jpeg' }) : null;
-        if (--pending === 0) {
-          URL.revokeObjectURL(url);
-          cb(files.filter(function (f) { return f; }));
-        }
-      }, 'image/jpeg', 0.92);
-    });
+    URL.revokeObjectURL(url);
+    cb(canvases);
   };
   img.onerror = function () {
     URL.revokeObjectURL(url);
     cb(null);
   };
   img.src = url;
-}
-
-/** 후보 이미지를 순서대로 해독 시도, 첫 성공에서 중단 */
-function setPhotoStatus(msg) {
-  var el = document.getElementById('photo-status');
-  if (el) el.textContent = msg || '';
-}
-
-function tryScanCandidates(candidates, idx) {
-  if (idx >= candidates.length) {
-    showLoading(false);
-    setPhotoStatus('❌ ' + candidates.length + '가지 보정본 모두 인식 실패');
-    toast('사진에서 코드를 인식하지 못했습니다. 바코드가 화면의 1/2 이상을 차지하게 가까이서, 정면에서 다시 찍어주세요.', true);
-    return;
-  }
-  setPhotoStatus('🔍 인식 시도 중… (' + (idx + 1) + '/' + candidates.length + ')');
-  try {
-    if (!photoScanner) photoScanner = new Html5Qrcode('photo-reader');
-    var p = photoScanner.scanFileV2
-      ? photoScanner.scanFileV2(candidates[idx], false).then(function (r) { return r.decodedText; })
-      : photoScanner.scanFile(candidates[idx], false);
-    p.then(function (text) {
-      showLoading(false);
-      setPhotoStatus('');
-      startVerifyFromScan(text, 'photo');   // 사진 인식 결과도 확인창을 거쳐 적용
-    }).catch(function () {
-      tryScanCandidates(candidates, idx + 1);
-    });
-  } catch (err) {
-    showLoading(false);
-    setPhotoStatus('');
-    toast('사진 인식 실패: ' + err, true);
-  }
 }
 
 function onCameraScan(text) {
