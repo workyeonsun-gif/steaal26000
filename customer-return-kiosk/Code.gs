@@ -144,6 +144,81 @@ function searchBooks(query) {
   return results;
 }
 
+/** PDF 내역서용 HTML 이스케이프 */
+function escapeHtml_(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** 확인 화면과 같은 내용의 반품 내역서 HTML 생성 */
+function buildReceiptHtml_(payload) {
+  var e = escapeHtml_;
+  var rows = '', totalOk = 0, totalBad = 0;
+  (payload.items || []).forEach(function (it) {
+    var ok = Math.max(0, parseInt(it.qtyOk, 10) || 0);
+    var bad = Math.max(0, parseInt(it.qtyDamaged, 10) || 0);
+    totalOk += ok; totalBad += bad;
+    rows += '<tr><td>' + (it.found ? '' : '[미등록] ') + e(it.title) + '</td>' +
+      '<td>' + e(it.edition || '-') + '</td><td>' + e(it.isbn || '-') + '</td>' +
+      '<td class="n">' + ok + '</td><td class="n red">' + bad + '</td>' +
+      '<td class="n">' + (ok + bad) + '</td></tr>';
+  });
+  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+    'body{font-family:"Malgun Gothic","Noto Sans KR",sans-serif;padding:24px;color:#111}' +
+    'h1{font-size:20px;text-align:center;margin-bottom:18px}' +
+    '.meta{font-size:12px;margin-bottom:14px}.meta div{margin:2px 0}' +
+    'table{width:100%;border-collapse:collapse;font-size:12px}' +
+    'th,td{border:1px solid #999;padding:6px 8px;text-align:left}' +
+    'th{background:#eee}.n{text-align:right}.red{color:#c00}' +
+    '.note{margin-top:12px;font-size:11px;color:#c00}' +
+    '</style></head><body>' +
+    '<h1>도서 반품 내역서 (개인고객)</h1>' +
+    '<div class="meta">' +
+    '<div>고객명: ' + e(payload.customer) + '</div>' +
+    '<div>주문번호: ' + e(payload.orderNo || '-') + '</div>' +
+    '<div>반품일자: ' + e(payload.returnDate) + '</div>' +
+    '<div>출력일시: ' + now + '</div></div>' +
+    '<table><tr><th>제목</th><th>판정보</th><th>ISBN</th><th>반품 OK</th><th>접수 불가(파손)</th><th>계</th></tr>' +
+    rows +
+    '<tr><th colspan="3">합계</th><th class="n">' + totalOk + '</th><th class="n">' + totalBad + '</th><th class="n">' + (totalOk + totalBad) + '</th></tr>' +
+    '</table>' +
+    (totalBad ? '<div class="note">⚠ 파손 ' + totalBad + '권은 "접수 불가(파손)" 상태로 기록됩니다.</div>' : '') +
+    '</body></html>';
+}
+
+/** 내역서 HTML을 PDF Blob으로 변환 */
+function createReceiptPdf_(payload) {
+  if (!payload || !payload.items || !payload.items.length) throw new Error('PDF로 만들 내역이 없습니다.');
+  var pdf = Utilities.newBlob(buildReceiptHtml_(payload), MimeType.HTML, 'receipt.html').getAs(MimeType.PDF);
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmm');
+  var who = String(payload.customer || '반품').replace(/[\\\/:*?"<>|\s]/g, '').slice(0, 20) || '반품';
+  pdf.setName('반품내역_' + who + '_' + stamp + '.pdf');
+  return pdf;
+}
+
+/** 클라이언트 다운로드용: PDF를 base64로 반환 */
+function getReceiptPdf(payload) {
+  var pdf = createReceiptPdf_(payload);
+  return { name: pdf.getName(), base64: Utilities.base64Encode(pdf.getBytes()) };
+}
+
+/** 반품 내역서 PDF를 이메일로 전송 */
+function emailReceipt(payload, email) {
+  email = String(email || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('올바른 이메일 주소가 아닙니다.');
+  var pdf = createReceiptPdf_(payload);
+  MailApp.sendEmail({
+    to: email,
+    subject: '[도서 반품] 반품 내역서 — ' + String(payload.customer || ''),
+    body: '도서 반품 내역서를 첨부합니다.\n\n고객명: ' + String(payload.customer || '') +
+      '\n주문번호: ' + String(payload.orderNo || '-') +
+      '\n반품일자: ' + String(payload.returnDate || ''),
+    attachments: [pdf]
+  });
+  return { ok: true };
+}
+
 /**
  * 반품 내역을 기록합니다.
  *  - 도서목록에 있는 도서   → 반품기록 시트
